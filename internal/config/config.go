@@ -300,22 +300,22 @@ func applyModeDefaults(cfg *Config) {
 	default:
 		cfg.Mode = "balanced"
 		if cfg.Collector.KatanaConcurrency <= 0 {
-			cfg.Collector.KatanaConcurrency = 20
+			cfg.Collector.KatanaConcurrency = 16
 		}
 		if cfg.Collector.KatanaDepth <= 0 {
 			cfg.Collector.KatanaDepth = 3
 		}
 		if cfg.Collector.CrawlergoTabs <= 0 {
-			cfg.Collector.CrawlergoTabs = 10
+			cfg.Collector.CrawlergoTabs = 8
 		}
 		if cfg.Collector.CrawlergoTimeout <= 0 {
 			cfg.Collector.CrawlergoTimeout = 1200
 		}
 		if cfg.Scanner.JSWorkers <= 0 {
-			cfg.Scanner.JSWorkers = 16
+			cfg.Scanner.JSWorkers = 14
 		}
 		if cfg.Scanner.ScanWorkers <= 0 {
-			cfg.Scanner.ScanWorkers = 24
+			cfg.Scanner.ScanWorkers = 20
 		}
 		if cfg.Scanner.HTTPTimeoutSec <= 0 {
 			cfg.Scanner.HTTPTimeoutSec = 15

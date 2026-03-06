@@ -191,6 +191,11 @@ func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 	}
 
 	findings = dedupeFindings(findings)
+	if s.onFinding != nil {
+		for _, f := range findings {
+			s.onFinding(f)
+		}
+	}
 
 	if s.verbose {
 		skipped := totalGrouped - scanned
@@ -410,7 +415,6 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 	go func() {
 		defer collectDone.Done()
 		seen := map[string]struct{}{}
-		onFinding := s.onFinding
 		for fr := range findingCh {
 			f := fr.finding
 			key := f.URL + "|" + f.Param + "|" + f.Context + "|" + strings.Join(intsToStr(f.ReflectedLines), ",")
@@ -420,9 +424,6 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 			seen[key] = struct{}{}
 			findings = append(findings, f)
 			hitGroups[fr.groupKey] = true
-			if onFinding != nil {
-				onFinding(f)
-			}
 		}
 	}()
 
@@ -805,31 +806,31 @@ func buildSemanticProbes(contexts []string) []semanticProbe {
 				Context:   "script:string_break",
 				Payload:   `";` + token + `;//`,
 				Token:     token,
-				Indicator: "script 字符串上下文可见引号闭合与语句注入迹象",
+				Indicator: "script \u5b57\u7b26\u4e32\u4e0a\u4e0b\u6587\u53ef\u89c1\u5f15\u53f7\u95ed\u5408\u4e0e\u8bed\u53e5\u6ce8\u5165\u8ff9\u8c61",
 			})
 			add(semanticProbe{
 				Context:   "script:string_break",
 				Payload:   `';` + token + `;//`,
 				Token:     token,
-				Indicator: "script single-quote breakout marker reflected",
+				Indicator: "script 单引号字符串上下文出现闭合与注入迹象",
 			})
 			add(semanticProbe{
 				Context:   "script:line_comment",
 				Payload:   "\n;" + token + ";//",
 				Token:     token,
-				Indicator: "script line-comment escape marker reflected",
+				Indicator: "script 单行注释上下文出现换行逃逸迹象",
 			})
 			add(semanticProbe{
 				Context:   "script:block_comment",
 				Payload:   "*/" + token + ";/*",
 				Token:     token,
-				Indicator: "script block-comment escape marker reflected",
+				Indicator: "script 块注释上下文出现闭合与逃逸迹象",
 			})
 			add(semanticProbe{
 				Context:   "script:identifier",
 				Payload:   token,
 				Token:     token,
-				Indicator: "script 标识符位置出现可控回显",
+				Indicator: "script \u6807\u8bc6\u7b26\u4f4d\u7f6e\u51fa\u73b0\u53ef\u63a7\u56de\u663e",
 			})
 		case "attribute_value":
 			add(semanticProbe{
@@ -967,9 +968,9 @@ func matchScriptContext(p semanticProbe, resp string) (bool, string) {
 			if strings.Contains(code, p.Payload) {
 				idRe := regexp.MustCompile(`(?m)[;(\s]` + regexp.QuoteMeta(p.Token) + `\s*;`)
 				if idRe.MatchString(code) {
-					return true, "script 字符串已闭合且回显位于可执行语句位置"
+					return true, "script \u5b57\u7b26\u4e32\u5df2\u95ed\u5408\u4e14\u56de\u663e\u4f4d\u4e8e\u53ef\u6267\u884c\u8bed\u53e5\u4f4d\u7f6e"
 				}
-				return true, "script string appears breakable; manual execution check required"
+				return true, "script 字符串疑似可闭合，需人工确认是否可执行"
 			}
 		case "script:line_comment":
 			if strings.Contains(code, p.Payload) || strings.Contains(code, "\n;"+p.Token+";//") {

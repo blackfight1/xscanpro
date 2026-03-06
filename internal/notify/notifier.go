@@ -36,9 +36,10 @@ type Notifier struct {
 	client *http.Client
 	cfg    Config
 
-	mu           sync.Mutex
-	sentByHost   map[string]int
-	droppedCount int
+	mu              sync.Mutex
+	sentByHost      map[string]int
+	sentKeySet      map[string]struct{}
+	droppedCount    int
 
 	ch chan model.Finding
 	wg sync.WaitGroup
@@ -46,10 +47,11 @@ type Notifier struct {
 
 func New(cfg Config, verbose bool) *Notifier {
 	n := &Notifier{
-		enabled:    cfg.Enabled,
-		verbose:    verbose,
-		cfg:        cfg,
-		sentByHost: map[string]int{},
+		enabled:         cfg.Enabled,
+		verbose:         verbose,
+		cfg:             cfg,
+		sentByHost:      map[string]int{},
+		sentKeySet:      map[string]struct{}{},
 	}
 	if !cfg.Enabled {
 		return n
@@ -107,23 +109,57 @@ func (n *Notifier) loop() {
 		if host == "" {
 			host = "unknown"
 		}
-		if !n.canSendHost(host) {
+		if !n.reserveSend(host, f) {
 			continue
 		}
-		if err := n.sendDingTalk(f, host); err != nil && n.verbose {
-			fmt.Printf("      notify warning: %v\n", err)
+		if err := n.sendDingTalk(f, host); err != nil {
+			n.releaseSend(host, f)
+			if n.verbose {
+				fmt.Printf("      notify warning: %v\n", err)
+			}
 		}
 	}
 }
 
-func (n *Notifier) canSendHost(host string) bool {
+func (n *Notifier) reserveSend(host string, f model.Finding) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
 	if n.sentByHost[host] >= n.cfg.MaxPerSite {
 		return false
 	}
+
+	param := strings.ToLower(strings.TrimSpace(f.Param))
+	if param == "" {
+		param = "{empty}"
+	}
+	path := pathOf(f.URL)
+	ctx := strings.ToLower(strings.TrimSpace(f.Context))
+	uniq := host + "|" + path + "|" + param + "|" + ctx
+	if _, exists := n.sentKeySet[uniq]; exists {
+		return false
+	}
+
 	n.sentByHost[host]++
+	n.sentKeySet[uniq] = struct{}{}
 	return true
+}
+
+func (n *Notifier) releaseSend(host string, f model.Finding) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.sentByHost[host] > 0 {
+		n.sentByHost[host]--
+	}
+	param := strings.ToLower(strings.TrimSpace(f.Param))
+	if param == "" {
+		param = "{empty}"
+	}
+	path := pathOf(f.URL)
+	ctx := strings.ToLower(strings.TrimSpace(f.Context))
+	uniq := host + "|" + path + "|" + param + "|" + ctx
+	delete(n.sentKeySet, uniq)
 }
 
 func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
@@ -143,8 +179,15 @@ func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
 	}
 
 	title := fmt.Sprintf("[XSS] %s", host)
-	content := fmt.Sprintf("### %s\n- URL: `%s`\n- Param: `%s`\n- Context: `%s`\n- Evidence: %s\n",
-		title, trimText(f.URL, 500), f.Param, f.Context, trimText(f.Indicator, 500))
+	content := fmt.Sprintf(
+		"### %s\n- URL: `%s`\n- Param: `%s`\n- Payload: `%s`\n- Context: `%s`\n- Evidence: %s\n",
+		title,
+		strings.TrimSpace(f.URL),
+		f.Param,
+		trimText(f.InjectedValue, 500),
+		f.Context,
+		trimText(f.Indicator, 500),
+	)
 	payload := map[string]interface{}{
 		"msgtype": "markdown",
 		"markdown": map[string]string{
@@ -183,6 +226,18 @@ func hostOf(rawURL string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(u.Hostname()))
+}
+
+func pathOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return strings.TrimSpace(rawURL)
+	}
+	p := strings.TrimSpace(u.Path)
+	if p == "" {
+		p = "/"
+	}
+	return p
 }
 
 func trimText(s string, max int) string {

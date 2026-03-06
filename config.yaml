@@ -58,7 +58,7 @@ collector:
 
   # Katana crawling concurrency.
   # 0 means use mode default.
-  katana_concurrency: 20
+  katana_concurrency: 16
 
   # Katana crawl depth.
   # 0 means use mode default.
@@ -72,7 +72,7 @@ collector:
 
   # Crawlergo max tab count (-t).
   # 0 means use mode default.
-  crawlergo_tabs: 10
+  crawlergo_tabs: 8
 
   # Enable crawlergo robots path discovery (--robots-path).
   crawlergo_robots_path: true
@@ -93,11 +93,11 @@ target:
 scanner:
   # JS fetching/extraction worker count.
   # 0 means use mode default.
-  js_workers: 16
+  js_workers: 14
 
   # Total scanner workers (used for auto split when custom split is not set).
   # 0 means use mode default.
-  scan_workers: 24
+  scan_workers: 20
 
   # Optional custom worker split for scanner pipeline.
   # If all three are >0, they override auto split.

@@ -22,6 +22,7 @@ It uses neutral markers and context-aware verification.
 - Reflected XSS focused scanning
 - Optional DingTalk notification when findings are produced (with per-site cap)
 - Quick probe with GET batch params (default batch size: 45)
+- Optional POST reflected scan for `application/x-www-form-urlencoded` forms (batched body params)
 - Verify only hit params in second stage (with same-batch parameter context to improve combo detection)
 - In `batch` mode, scan-stage hidden params are limited to small high-value additions only
 - In `batch` mode, verify stage uses fewer representative probes and stops on first strong hit
@@ -93,6 +94,10 @@ Common keys:
 - `batch` mode also keeps scan-stage hidden params and verify probes more conservative.
 - `scanner.all_params`
 - `scanner.param_batch_size`
+- `scanner.enable_post_scan`
+- `scanner.post_param_batch_size`
+- `scanner.max_post_forms_per_url`
+- `scanner.max_post_params_per_form`
 - `scanner.sample_per_group`
 - `scanner.expand_on_hit`
 - `scanner.shape_dedupe_enabled`
@@ -147,6 +152,7 @@ Artifacts:
 4. Scan
    - template sample phase
    - GET batch quick probe
+   - optional POST form-urlencoded quick probe
    - `batch`: hidden params are filtered to high-value names and capped
    - `batch`: verify probes are reduced to representative contexts and stop on first hit
    - `deep`: hidden params and verify probes keep broad coverage
@@ -159,10 +165,9 @@ Artifacts:
 ## Important
 
 - Main focus is reflected XSS.
+- POST mode only tests `application/x-www-form-urlencoded` style body submissions.
+- CSRF logic is intentionally not handled in this scanner.
 - Results should be manually validated in authorized scope.
 - When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
 - `balanced`/`fast` are intended to use `batch` parameter strategy by default.
 - `deep` mode is intended to use `deep` parameter strategy by default.
-
-
-

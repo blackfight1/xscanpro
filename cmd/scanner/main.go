@@ -48,6 +48,7 @@ func printHeader(cfg config.Config) {
 	fmt.Printf("  param strategy: %s\n", cfg.Target.ParamStrategy)
 	fmt.Printf("  collector:      waymore=%t, katana=%t, crawlergo=%t\n", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
 	fmt.Printf("  workers:        js=%d, scan=%d\n", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
+	fmt.Printf("  post scan:      enabled=%t, batch=%d\n", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
 	fmt.Printf("  notify:         dingtalk=%t\n", cfg.Notify.Enabled)
 	fmt.Println()
 }
@@ -84,7 +85,12 @@ func trimForConsole(s string, max int) string {
 }
 
 func printFinding(f model.Finding) {
+	method := strings.ToUpper(strings.TrimSpace(f.Method))
+	if method == "" {
+		method = "GET"
+	}
 	printColor(colorRed, "[HIT] Reflected XSS\n")
+	stageInfo("method", method)
 	stageInfo("url", f.URL)
 	stageInfo("param", f.Param)
 	stageInfo("payload", trimForConsole(f.InjectedValue, 180))
@@ -179,9 +185,12 @@ func main() {
 	s4 := stageStart(4, totalStages, "Scanner")
 	stageInfo("scan workers", cfg.Scanner.ScanWorkers)
 	stageInfo("max params/url", cfg.Scanner.MaxParamsPerURL)
+	stageInfo("post scan", cfg.Scanner.EnablePostScan)
+	stageInfo("post batch", cfg.Scanner.PostParamBatchSize)
 	scan := scanner.New(client, cfg.Scanner.ScanWorkers, cfg.Scanner.MaxParamsPerURL, cfg.Verbose)
 	scan.SetTemplateStrategy(cfg.Scanner.SamplePerGroup, cfg.Scanner.ExpandOnHit)
 	scan.SetBatchStrategy(cfg.Scanner.AllParams, cfg.Scanner.ParamBatchSize)
+	scan.SetPostStrategy(cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize, cfg.Scanner.MaxPostFormsPerURL, cfg.Scanner.MaxPostParamsPerForm)
 	scan.SetWorkerSplit(cfg.Scanner.TargetWorkers, cfg.Scanner.QuickWorkers, cfg.Scanner.VerifyWorkers)
 	scan.SetShapeDedupe(cfg.Scanner.ShapeDedupeEnabled, cfg.Scanner.ShapeThreshold)
 	scan.SetParamStrategy(cfg.Target.ParamStrategy, cfg.Target.HighValueGlobalParams)

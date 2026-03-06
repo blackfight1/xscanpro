@@ -45,19 +45,23 @@ type TargetConfig struct {
 }
 
 type ScannerConfig struct {
-	JSWorkers          int  `yaml:"js_workers"`
-	ScanWorkers        int  `yaml:"scan_workers"`
-	TargetWorkers      int  `yaml:"target_workers"`
-	QuickWorkers       int  `yaml:"quick_workers"`
-	VerifyWorkers      int  `yaml:"verify_workers"`
-	HTTPTimeoutSec     int  `yaml:"http_timeout_sec"`
-	MaxParamsPerURL    int  `yaml:"max_params_per_url"`
-	AllParams          bool `yaml:"all_params"`
-	ParamBatchSize     int  `yaml:"param_batch_size"`
-	SamplePerGroup     int  `yaml:"sample_per_group"`
-	ExpandOnHit        bool `yaml:"expand_on_hit"`
-	ShapeDedupeEnabled bool `yaml:"shape_dedupe_enabled"`
-	ShapeThreshold     int  `yaml:"shape_threshold"`
+	JSWorkers            int  `yaml:"js_workers"`
+	ScanWorkers          int  `yaml:"scan_workers"`
+	TargetWorkers        int  `yaml:"target_workers"`
+	QuickWorkers         int  `yaml:"quick_workers"`
+	VerifyWorkers        int  `yaml:"verify_workers"`
+	HTTPTimeoutSec       int  `yaml:"http_timeout_sec"`
+	MaxParamsPerURL      int  `yaml:"max_params_per_url"`
+	AllParams            bool `yaml:"all_params"`
+	ParamBatchSize       int  `yaml:"param_batch_size"`
+	EnablePostScan       bool `yaml:"enable_post_scan"`
+	PostParamBatchSize   int  `yaml:"post_param_batch_size"`
+	MaxPostFormsPerURL   int  `yaml:"max_post_forms_per_url"`
+	MaxPostParamsPerForm int  `yaml:"max_post_params_per_form"`
+	SamplePerGroup       int  `yaml:"sample_per_group"`
+	ExpandOnHit          bool `yaml:"expand_on_hit"`
+	ShapeDedupeEnabled   bool `yaml:"shape_dedupe_enabled"`
+	ShapeThreshold       int  `yaml:"shape_threshold"`
 }
 
 type NotifyConfig struct {
@@ -154,12 +158,16 @@ func defaultConfig() Config {
 			HighValueGlobalParams: []string{"q", "query", "search", "keyword", "kw", "term", "s", "id", "item", "pid", "cat", "page", "lang", "sort", "filter", "file", "path", "url", "redirect", "return"},
 		},
 		Scanner: ScannerConfig{
-			AllParams:          true,
-			ParamBatchSize:     45,
-			SamplePerGroup:     0,
-			ExpandOnHit:        true,
-			ShapeDedupeEnabled: true,
-			ShapeThreshold:     10,
+			AllParams:            true,
+			ParamBatchSize:       45,
+			EnablePostScan:       true,
+			PostParamBatchSize:   80,
+			MaxPostFormsPerURL:   8,
+			MaxPostParamsPerForm: 120,
+			SamplePerGroup:       0,
+			ExpandOnHit:          true,
+			ShapeDedupeEnabled:   true,
+			ShapeThreshold:       10,
 		},
 		Notify: NotifyConfig{
 			Enabled:    false,
@@ -266,6 +274,15 @@ func applyModeDefaults(cfg *Config) {
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
 		}
+		if cfg.Scanner.PostParamBatchSize <= 0 {
+			cfg.Scanner.PostParamBatchSize = 80
+		}
+		if cfg.Scanner.MaxPostFormsPerURL <= 0 {
+			cfg.Scanner.MaxPostFormsPerURL = 4
+		}
+		if cfg.Scanner.MaxPostParamsPerForm <= 0 {
+			cfg.Scanner.MaxPostParamsPerForm = 80
+		}
 		if cfg.Scanner.SamplePerGroup < 0 {
 			cfg.Scanner.SamplePerGroup = 0
 		}
@@ -305,6 +322,15 @@ func applyModeDefaults(cfg *Config) {
 		}
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
+		}
+		if cfg.Scanner.PostParamBatchSize <= 0 {
+			cfg.Scanner.PostParamBatchSize = 100
+		}
+		if cfg.Scanner.MaxPostFormsPerURL <= 0 {
+			cfg.Scanner.MaxPostFormsPerURL = 12
+		}
+		if cfg.Scanner.MaxPostParamsPerForm <= 0 {
+			cfg.Scanner.MaxPostParamsPerForm = 200
 		}
 		if cfg.Scanner.SamplePerGroup < 0 {
 			cfg.Scanner.SamplePerGroup = 0
@@ -346,6 +372,15 @@ func applyModeDefaults(cfg *Config) {
 		}
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
+		}
+		if cfg.Scanner.PostParamBatchSize <= 0 {
+			cfg.Scanner.PostParamBatchSize = 80
+		}
+		if cfg.Scanner.MaxPostFormsPerURL <= 0 {
+			cfg.Scanner.MaxPostFormsPerURL = 8
+		}
+		if cfg.Scanner.MaxPostParamsPerForm <= 0 {
+			cfg.Scanner.MaxPostParamsPerForm = 120
 		}
 		if cfg.Scanner.SamplePerGroup < 0 {
 			cfg.Scanner.SamplePerGroup = 0

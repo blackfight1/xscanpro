@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -19,11 +20,17 @@ import (
 )
 
 var (
-	inputNameRe = regexp.MustCompile(`(?i)<input[^>]+name=["']([a-zA-Z_][a-zA-Z0-9_]{1,30})["']`)
-	jsVarRe     = regexp.MustCompile(`(?i)\b(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]{1,30})\b`)
-	scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>[\s\S]*?%s[\s\S]*?</script>`)
-	attrValRe   = regexp.MustCompile(`(?is)[a-zA-Z_:][-a-zA-Z0-9_:.]*\s*=\s*["'][^"']*%s[^"']*["']`)
-	commentRe   = regexp.MustCompile(`(?is)<!--[\s\S]*?%s[\s\S]*?-->`)
+	inputNameRe    = regexp.MustCompile(`(?i)<input[^>]+name=["']([a-zA-Z_][a-zA-Z0-9_]{1,30})["']`)
+	jsVarRe        = regexp.MustCompile(`(?i)\b(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]{1,30})\b`)
+	scriptTagRe    = regexp.MustCompile(`(?is)<script[^>]*>[\s\S]*?%s[\s\S]*?</script>`)
+	attrValRe      = regexp.MustCompile(`(?is)[a-zA-Z_:][-a-zA-Z0-9_:.]*\s*=\s*["'][^"']*%s[^"']*["']`)
+	commentRe      = regexp.MustCompile(`(?is)<!--[\s\S]*?%s[\s\S]*?-->`)
+	formBlockRe    = regexp.MustCompile(`(?is)<form\b[^>]*>[\s\S]*?</form>`)
+	formControlRe  = regexp.MustCompile(`(?is)<(?:input|textarea|select)\b[^>]*>`)
+	attrMethodRe   = regexp.MustCompile(`(?is)\bmethod\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	attrActionRe   = regexp.MustCompile(`(?is)\baction\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	attrNameRe     = regexp.MustCompile(`(?is)\bname\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	invalidParamRe = regexp.MustCompile(`[^a-zA-Z0-9_:\.\-\[\]]`)
 
 	tplNumRe        = regexp.MustCompile(`\d+`)
 	tplUUIDRe       = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
@@ -54,24 +61,28 @@ type semanticProbe struct {
 }
 
 type Scanner struct {
-	client              *fetch.Client
-	workerCount         int
-	quickWorkers        int
-	verifyWorkers       int
-	targetWorkers       int
-	maxParams           int
-	allParams           bool
-	paramBatchSize      int
-	samplePerGroup      int
-	expandOnHit         bool
-	shapeDedupeEnabled  bool
-	shapeThreshold      int
-	paramStrategy       string
-	highValueParamSet   map[string]struct{}
-	batchHiddenParamCap int
-	batchVerifyProbeCap int
-	onFinding           func(model.Finding)
-	verbose             bool
+	client               *fetch.Client
+	workerCount          int
+	quickWorkers         int
+	verifyWorkers        int
+	targetWorkers        int
+	maxParams            int
+	allParams            bool
+	paramBatchSize       int
+	enablePostScan       bool
+	postParamBatchSize   int
+	maxPostFormsPerURL   int
+	maxPostParamsPerForm int
+	samplePerGroup       int
+	expandOnHit          bool
+	shapeDedupeEnabled   bool
+	shapeThreshold       int
+	paramStrategy        string
+	highValueParamSet    map[string]struct{}
+	batchHiddenParamCap  int
+	batchVerifyProbeCap  int
+	onFinding            func(model.Finding)
+	verbose              bool
 }
 
 type scopedTarget struct {
@@ -79,13 +90,20 @@ type scopedTarget struct {
 	groupKey string
 }
 
+type postForm struct {
+	actionURL string
+	params    []string
+}
+
 type quickTask struct {
+	method   string
 	baseURL  string
 	params   []string
 	groupKey string
 }
 
 type verifyTask struct {
+	method     string
 	baseURL    string
 	param      string
 	marker     string
@@ -118,23 +136,27 @@ func New(client *fetch.Client, workers, maxParams int, verbose bool) *Scanner {
 		target = 1
 	}
 	return &Scanner{
-		client:              client,
-		workerCount:         workers,
-		quickWorkers:        quick,
-		verifyWorkers:       verify,
-		targetWorkers:       target,
-		maxParams:           maxParams,
-		allParams:           true,
-		paramBatchSize:      45,
-		samplePerGroup:      0,
-		expandOnHit:         true,
-		shapeDedupeEnabled:  true,
-		shapeThreshold:      4,
-		paramStrategy:       "deep",
-		highValueParamSet:   map[string]struct{}{},
-		batchHiddenParamCap: 6,
-		batchVerifyProbeCap: 4,
-		verbose:             verbose,
+		client:               client,
+		workerCount:          workers,
+		quickWorkers:         quick,
+		verifyWorkers:        verify,
+		targetWorkers:        target,
+		maxParams:            maxParams,
+		allParams:            true,
+		paramBatchSize:       45,
+		enablePostScan:       true,
+		postParamBatchSize:   80,
+		maxPostFormsPerURL:   8,
+		maxPostParamsPerForm: 120,
+		samplePerGroup:       0,
+		expandOnHit:          true,
+		shapeDedupeEnabled:   true,
+		shapeThreshold:       4,
+		paramStrategy:        "deep",
+		highValueParamSet:    map[string]struct{}{},
+		batchHiddenParamCap:  6,
+		batchVerifyProbeCap:  4,
+		verbose:              verbose,
 	}
 }
 
@@ -148,6 +170,19 @@ func (s *Scanner) SetBatchStrategy(allParams bool, batchSize int) {
 	s.allParams = allParams
 	if batchSize > 0 {
 		s.paramBatchSize = batchSize
+	}
+}
+
+func (s *Scanner) SetPostStrategy(enabled bool, batchSize, maxFormsPerURL, maxParamsPerForm int) {
+	s.enablePostScan = enabled
+	if batchSize > 0 {
+		s.postParamBatchSize = batchSize
+	}
+	if maxFormsPerURL > 0 {
+		s.maxPostFormsPerURL = maxFormsPerURL
+	}
+	if maxParamsPerForm > 0 {
+		s.maxPostParamsPerForm = maxParamsPerForm
 	}
 }
 
@@ -371,13 +406,23 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 		go func() {
 			defer targetDone.Done()
 			for t := range targetCh {
-				params, ok := s.prepareParams(t.target)
+				params, forms, ok := s.prepareTarget(t.target)
 				if ok {
 					batches := chunkParams(params, s.paramBatchSize)
 					for _, batch := range batches {
-						quickCh <- quickTask{baseURL: t.target.URL, params: batch, groupKey: t.groupKey}
+						quickCh <- quickTask{method: http.MethodGet, baseURL: t.target.URL, params: batch, groupKey: t.groupKey}
 						atomic.AddInt32(&generatedBatches, 1)
 						atomic.AddInt32(&generatedParams, int32(len(batch)))
+					}
+					if s.enablePostScan {
+						for _, pf := range forms {
+							postBatches := chunkParams(pf.params, s.postParamBatchSize)
+							for _, batch := range postBatches {
+								quickCh <- quickTask{method: http.MethodPost, baseURL: pf.actionURL, params: batch, groupKey: t.groupKey}
+								atomic.AddInt32(&generatedBatches, 1)
+								atomic.AddInt32(&generatedParams, int32(len(batch)))
+							}
+						}
 					}
 				}
 				atomic.AddInt32(&processedTargets, 1)
@@ -391,7 +436,7 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 			defer quickDone.Done()
 			for task := range quickCh {
 				if s.shapeDedupeEnabled {
-					fp := smartRequestFingerprint(task.baseURL, task.params)
+					fp := smartRequestFingerprint(task.method, task.baseURL, task.params)
 					shapeMu.Lock()
 					shapeCounter[fp]++
 					count := shapeCounter[fp]
@@ -524,9 +569,13 @@ func dedupeFindings(in []model.Finding) []model.Finding {
 }
 
 func findingDedupKey(f model.Finding) string {
+	method := strings.ToUpper(strings.TrimSpace(f.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
 	u, err := url.Parse(f.URL)
 	if err != nil {
-		return f.URL + "|" + f.Param + "|" + f.Context
+		return method + "|" + f.URL + "|" + f.Param + "|" + f.Context
 	}
 	keys := make([]string, 0, len(u.Query()))
 	for k := range u.Query() {
@@ -534,7 +583,7 @@ func findingDedupKey(f model.Finding) string {
 	}
 	sort.Strings(keys)
 	baseCtx := strings.Split(strings.ToLower(strings.TrimSpace(f.Context)), ":")[0]
-	return strings.ToLower(u.Scheme) + "|" + strings.ToLower(u.Hostname()) + "|" + markPath(u.Path) +
+	return method + "|" + strings.ToLower(u.Scheme) + "|" + strings.ToLower(u.Hostname()) + "|" + markPath(u.Path) +
 		"|" + strings.Join(keys, ",") + "|" + strings.ToLower(strings.TrimSpace(f.Param)) + "|" + baseCtx
 }
 
@@ -577,15 +626,14 @@ func requestShapeFingerprint(rawURL string) string {
 	return strings.ToLower(u.Hostname()) + "|" + markPath(u.Path) + "|" + strings.Join(keys, ",") + "|" + strings.Join(shapeParts, ";")
 }
 
-func smartRequestFingerprint(rawURL string, batchParams []string) string {
+func smartRequestFingerprint(method, rawURL string, batchParams []string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return rawURL
+		return method + "|" + rawURL
 	}
 	markedPath := markPath(u.Path)
 	query := u.Query()
 
-	// Include existing query keys and current batch keys.
 	keySet := map[string]struct{}{}
 	shapeByKey := map[string]string{}
 	for k := range query {
@@ -606,13 +654,16 @@ func smartRequestFingerprint(rawURL string, batchParams []string) string {
 	}
 	sort.Strings(keys)
 
-	// Existing query values use real shape; batch params use fixed marker shape.
 	shapeItems := make([]string, 0, len(keys))
 	for _, k := range keys {
 		shapeItems = append(shapeItems, k+"="+shapeByKey[k])
 	}
 
-	base := "GET|" + strings.ToLower(u.Scheme) + "|" + strings.ToLower(u.Hostname()) + "|" + markedPath +
+	m := strings.ToUpper(strings.TrimSpace(method))
+	if m == "" {
+		m = http.MethodGet
+	}
+	base := m + "|" + strings.ToLower(u.Scheme) + "|" + strings.ToLower(u.Hostname()) + "|" + markedPath +
 		"|" + strings.Join(keys, ",") + "|" + strings.Join(shapeItems, ";")
 	sum := md5.Sum([]byte(base))
 	return hex.EncodeToString(sum[:])
@@ -671,15 +722,19 @@ func valueShape(v string) string {
 	return "OTHER"
 }
 
-func (s *Scanner) prepareParams(target model.ScanTarget) ([]string, bool) {
+func (s *Scanner) prepareTarget(target model.ScanTarget) ([]string, []postForm, bool) {
 	_, baseline, ct, err := s.client.Get(target.URL)
 	if err != nil || !strings.Contains(strings.ToLower(ct), "text/html") {
-		return nil, false
+		return nil, nil, false
 	}
 
 	paramSet := map[string]struct{}{}
 	for _, p := range target.Params {
-		paramSet[p] = struct{}{}
+		n := normalizeParamName(p)
+		if n == "" {
+			continue
+		}
+		paramSet[n] = struct{}{}
 	}
 	for _, p := range s.filterHiddenParams(discoverHiddenParams(baseline), paramSet) {
 		paramSet[p] = struct{}{}
@@ -693,7 +748,119 @@ func (s *Scanner) prepareParams(target model.ScanTarget) ([]string, bool) {
 	if !s.allParams && s.maxParams > 0 && len(params) > s.maxParams {
 		params = params[:s.maxParams]
 	}
-	return params, len(params) > 0
+
+	forms := s.discoverPostForms(target.URL, baseline)
+	return params, forms, len(params) > 0 || len(forms) > 0
+}
+
+func (s *Scanner) discoverPostForms(pageURL, html string) []postForm {
+	if !s.enablePostScan {
+		return nil
+	}
+	matches := formBlockRe.FindAllString(html, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	forms := make([]postForm, 0, len(matches))
+	for _, block := range matches {
+		if s.maxPostFormsPerURL > 0 && len(forms) >= s.maxPostFormsPerURL {
+			break
+		}
+		openTag := block
+		if i := strings.Index(block, ">"); i >= 0 {
+			openTag = block[:i+1]
+		}
+		method := strings.ToUpper(strings.TrimSpace(attrValue(openTag, attrMethodRe)))
+		if method == "" {
+			method = http.MethodGet
+		}
+		if method != http.MethodPost {
+			continue
+		}
+		actionURL := resolveActionURL(pageURL, attrValue(openTag, attrActionRe))
+		if actionURL == "" {
+			continue
+		}
+
+		fieldSet := map[string]struct{}{}
+		for _, tag := range formControlRe.FindAllString(block, -1) {
+			name := normalizeParamName(attrValue(tag, attrNameRe))
+			if name == "" {
+				continue
+			}
+			fieldSet[name] = struct{}{}
+		}
+		if len(fieldSet) == 0 {
+			continue
+		}
+		fields := make([]string, 0, len(fieldSet))
+		for k := range fieldSet {
+			fields = append(fields, k)
+		}
+		sort.Strings(fields)
+		if s.maxPostParamsPerForm > 0 && len(fields) > s.maxPostParamsPerForm {
+			fields = fields[:s.maxPostParamsPerForm]
+		}
+		if !s.allParams && s.maxParams > 0 && len(fields) > s.maxParams {
+			fields = fields[:s.maxParams]
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		forms = append(forms, postForm{actionURL: actionURL, params: fields})
+	}
+	return forms
+}
+
+func resolveActionURL(pageURL, action string) string {
+	base, err := url.Parse(strings.TrimSpace(pageURL))
+	if err != nil {
+		return ""
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		if u, err := util.CanonicalURL(base.String()); err == nil {
+			return u
+		}
+		return ""
+	}
+	ref, err := url.Parse(action)
+	if err != nil {
+		return ""
+	}
+	if u, err := util.CanonicalURL(base.ResolveReference(ref).String()); err == nil {
+		return u
+	}
+	return ""
+}
+
+func attrValue(tag string, re *regexp.Regexp) string {
+	m := re.FindStringSubmatch(tag)
+	if len(m) < 2 {
+		return ""
+	}
+	for i := 1; i < len(m); i++ {
+		v := strings.TrimSpace(m[i])
+		if v != "" {
+			return strings.Trim(v, `"'`)
+		}
+	}
+	return ""
+}
+
+func normalizeParamName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	name = strings.Trim(name, `"'`)
+	if len(name) > 80 {
+		return ""
+	}
+	if invalidParamRe.MatchString(name) {
+		return ""
+	}
+	return name
 }
 
 func (s *Scanner) filterHiddenParams(hidden []string, existing map[string]struct{}) []string {
@@ -729,6 +896,14 @@ func (s *Scanner) filterHiddenParams(hidden []string, existing map[string]struct
 }
 
 func (s *Scanner) quickReflectBatch(task quickTask) []verifyTask {
+	method := strings.ToUpper(strings.TrimSpace(task.method))
+	if method == http.MethodPost {
+		return s.quickReflectPost(task)
+	}
+	return s.quickReflectGet(task)
+}
+
+func (s *Scanner) quickReflectGet(task quickTask) []verifyTask {
 	if len(task.params) == 0 {
 		return nil
 	}
@@ -764,6 +939,54 @@ func (s *Scanner) quickReflectBatch(task quickTask) []verifyTask {
 			findingURL = mutated
 		}
 		out = append(out, verifyTask{
+			method:     http.MethodGet,
+			baseURL:    task.baseURL,
+			param:      p,
+			marker:     marker,
+			contexts:   contexts,
+			batchCtx:   paramVals,
+			findingURL: findingURL,
+			lines:      markerLines(reflected, marker),
+			groupKey:   task.groupKey,
+		})
+	}
+	return out
+}
+
+func (s *Scanner) quickReflectPost(task quickTask) []verifyTask {
+	if len(task.params) == 0 {
+		return nil
+	}
+	markers := make(map[string]string, len(task.params))
+	paramVals := make(map[string]string, len(task.params))
+	for i, p := range task.params {
+		m := fmt.Sprintf("x%s_%03d", randHex(2), i)
+		markers[p] = m
+		paramVals[p] = m
+	}
+
+	_, reflected, ct, err := s.client.PostForm(task.baseURL, mapToURLValues(paramVals), nil)
+	if err != nil || !strings.Contains(strings.ToLower(ct), "text/html") {
+		return nil
+	}
+
+	findingURL, ferr := setQueries(task.baseURL, paramVals)
+	if ferr != nil {
+		findingURL = task.baseURL
+	}
+
+	out := make([]verifyTask, 0, len(task.params))
+	for _, p := range task.params {
+		marker := markers[p]
+		if !strings.Contains(reflected, marker) {
+			continue
+		}
+		contexts := classifyContexts(reflected, marker)
+		if len(contexts) == 0 {
+			continue
+		}
+		out = append(out, verifyTask{
+			method:     http.MethodPost,
 			baseURL:    task.baseURL,
 			param:      p,
 			marker:     marker,
@@ -783,12 +1006,38 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 		return model.Finding{}, false
 	}
 
+	method := strings.ToUpper(strings.TrimSpace(task.method))
+	if method == "" {
+		method = http.MethodGet
+	}
+
 	for _, p := range probes {
-		mutatedProbe, err := setQueryWithContext(task.baseURL, task.param, p.Payload, task.batchCtx)
-		if err != nil {
-			continue
+		probeVals := cloneStringMap(task.batchCtx)
+		probeVals[task.param] = p.Payload
+
+		var (
+			probeResp string
+			probeCT   string
+			probeErr  error
+			outURL    string
+		)
+
+		if method == http.MethodPost {
+			_, probeResp, probeCT, probeErr = s.client.PostForm(task.baseURL, mapToURLValues(probeVals), nil)
+			if u, err := setQueries(task.baseURL, probeVals); err == nil {
+				outURL = u
+			} else {
+				outURL = task.findingURL
+			}
+		} else {
+			mutatedProbe, err := setQueryWithContext(task.baseURL, task.param, p.Payload, probeVals)
+			if err != nil {
+				continue
+			}
+			outURL = mutatedProbe
+			_, probeResp, probeCT, probeErr = s.client.Get(mutatedProbe)
 		}
-		_, probeResp, probeCT, probeErr := s.client.Get(mutatedProbe)
+
 		if probeErr != nil || !strings.Contains(strings.ToLower(probeCT), "text/html") {
 			continue
 		}
@@ -805,7 +1054,8 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 			indicator = reason
 		}
 		return model.Finding{
-			URL:             mutatedProbe,
+			Method:          method,
+			URL:             outURL,
 			Param:           task.param,
 			InjectedValue:   p.Payload,
 			Context:         p.Context,
@@ -816,6 +1066,25 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 	}
 
 	return model.Finding{}, false
+}
+
+func mapToURLValues(kv map[string]string) url.Values {
+	vals := url.Values{}
+	for k, v := range kv {
+		vals.Set(k, v)
+	}
+	return vals
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Scanner) selectVerifyProbes(probes []semanticProbe) []semanticProbe {

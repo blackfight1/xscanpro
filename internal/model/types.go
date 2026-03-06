@@ -17,6 +17,7 @@ type ScanTarget struct {
 }
 
 type Finding struct {
+	Method          string `json:"method"`
 	URL             string `json:"url"`
 	Param           string `json:"param"`
 	InjectedValue   string `json:"injected_value"`

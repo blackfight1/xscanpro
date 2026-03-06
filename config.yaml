@@ -155,6 +155,22 @@ scanner:
   # Example: 45 means probe 45 params in one request.
   param_batch_size: 45
 
+  # Enable POST reflected XSS scan for application/x-www-form-urlencoded forms.
+  # true = parse HTML forms (method=post) and run POST quick/verify pipeline.
+  enable_post_scan: true
+
+  # Batch size for quick POST probing.
+  # POST can carry more params in one request body than GET query.
+  post_param_batch_size: 80
+
+  # Max POST forms parsed per page URL.
+  # Lower values reduce request explosion on heavy pages.
+  max_post_forms_per_url: 8
+
+  # Max params tested per POST form.
+  # 0 means use mode default.
+  max_post_params_per_form: 120
+
   # Similar-page strategy: sample N targets per template group in phase-1.
   # 0 means disable template sampling (xscan-like behavior).
   sample_per_group: 0
@@ -169,4 +185,3 @@ scanner:
   # Max samples kept per value-shape fingerprint before skipping.
   # Lower = faster, Higher = more coverage.
   shape_threshold: 15
-

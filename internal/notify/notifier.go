@@ -187,8 +187,9 @@ func (n *Notifier) releaseSend(host string, f model.Finding) {
 func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
 	title := fmt.Sprintf("[XSS] %s", host)
 	content := fmt.Sprintf(
-		"### %s\n- URL: `%s`\n- Param: `%s`\n- Payload: `%s`\n- Context: `%s`\n- Evidence: %s\n",
+		"### %s\n- Method: `%s`\n- URL: `%s`\n- Param: `%s`\n- Payload: `%s`\n- Context: `%s`\n- Evidence: %s\n",
 		title,
+		strings.ToUpper(strings.TrimSpace(f.Method)),
 		strings.TrimSpace(f.URL),
 		f.Param,
 		trimText(f.InjectedValue, 500),

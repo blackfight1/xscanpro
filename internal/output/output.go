@@ -14,6 +14,7 @@ import (
 )
 
 type findingView struct {
+	Method      string `json:"method"`
 	URL         string `json:"url"`
 	Param       string `json:"param"`
 	Payload     string `json:"payload"`
@@ -79,6 +80,9 @@ func renderMarkdownReport(r reportView) string {
 	ordered := make([]findingView, len(r.Findings))
 	copy(ordered, r.Findings)
 	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Method != ordered[j].Method {
+			return ordered[i].Method < ordered[j].Method
+		}
 		if ordered[i].URL != ordered[j].URL {
 			return ordered[i].URL < ordered[j].URL
 		}
@@ -91,6 +95,7 @@ func renderMarkdownReport(r reportView) string {
 	sb.WriteString("## Findings\n\n")
 	for i, f := range ordered {
 		sb.WriteString(fmt.Sprintf("### %d. Param: %s\n\n", i+1, f.Param))
+		sb.WriteString(fmt.Sprintf("- Method: `%s`\n", strings.ToUpper(strings.TrimSpace(f.Method))))
 		sb.WriteString(fmt.Sprintf("- Vulnerable URL: `%s`\n", f.URL))
 		sb.WriteString(fmt.Sprintf("- Payload: `%s`\n", f.Payload))
 		sb.WriteString(fmt.Sprintf("- Context: `%s`\n", f.Context))
@@ -115,6 +120,7 @@ func dedupeForReport(in []model.Finding) []findingView {
 		if !ok {
 			byKey[key] = agg{
 				view: findingView{
+					Method:      f.Method,
 					URL:         f.URL,
 					Param:       f.Param,
 					Payload:     f.InjectedValue,
@@ -127,6 +133,7 @@ func dedupeForReport(in []model.Finding) []findingView {
 		}
 		cur.view.Occurrences++
 		if len(strings.TrimSpace(f.Indicator)) > len(strings.TrimSpace(cur.view.Evidence)) {
+			cur.view.Method = f.Method
 			cur.view.Evidence = f.Indicator
 			cur.view.Payload = f.InjectedValue
 			cur.view.Context = f.Context

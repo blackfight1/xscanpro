@@ -90,6 +90,26 @@ target:
   # 0 means use mode default.
   max_per_pattern: 10
 
+  # Parameter strategy for target generation.
+  # batch = URL params + related JS params + a small global high-value param set.
+  #         In scan stage, hidden params are also limited to high-value names only.
+  # deep  = try to use nearly all discovered params.
+  # Leave empty to use mode default (balanced/fast -> batch, deep -> deep).
+  param_strategy: batch
+
+  # Small global param set used in batch mode across targets.
+  # Keep this list focused; the goal is broad coverage without global param explosion.
+  high_value_global_params:
+    - q
+    - query
+    - search
+    - keyword
+    - url
+    - redirect
+    - return
+    - next
+    - callback
+
 scanner:
   # JS fetching/extraction worker count.
   # 0 means use mode default.
@@ -138,3 +158,4 @@ scanner:
   # Max samples kept per value-shape fingerprint before skipping.
   # Lower = faster, Higher = more coverage.
   shape_threshold: 15
+

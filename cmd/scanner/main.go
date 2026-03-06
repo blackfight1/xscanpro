@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"xscanpro/internal/collector"
@@ -27,29 +28,84 @@ const logo = `
 `
 
 const (
-	colorBlue  = "\033[1;34m%s\033[0m"
-	colorCyan  = "\033[1;36m%s\033[0m"
-	colorGreen = "\033[1;32m%s\033[0m"
+	colorBlue   = "\033[1;34m%s\033[0m"
+	colorCyan   = "\033[1;36m%s\033[0m"
+	colorGreen  = "\033[1;32m%s\033[0m"
+	colorYellow = "\033[1;33m%s\033[0m"
+	colorRed    = "\033[1;31m%s\033[0m"
 )
 
-func stageStart(idx int, name string) time.Time {
-	fmt.Printf(colorCyan, fmt.Sprintf("[*] [%d/4] %s\n", idx, name))
+func printColor(format, text string) {
+	fmt.Printf(format, text)
+}
+
+func printHeader(cfg config.Config) {
+	printColor(colorBlue, logo)
+	printColor(colorBlue, "xscanpro\n")
+	fmt.Printf("  mode:           %s\n", cfg.Mode)
+	fmt.Printf("  domain:         %s\n", cfg.Domain)
+	fmt.Printf("  out:            %s\n", filepath.Clean(cfg.OutDir))
+	fmt.Printf("  param strategy: %s\n", cfg.Target.ParamStrategy)
+	fmt.Printf("  collector:      waymore=%t, katana=%t, crawlergo=%t\n", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
+	fmt.Printf("  workers:        js=%d, scan=%d\n", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
+	fmt.Printf("  notify:         dingtalk=%t\n", cfg.Notify.Enabled)
+	fmt.Println()
+}
+
+func stageStart(idx int, total int, name string) time.Time {
+	printColor(colorCyan, fmt.Sprintf("[%d/%d] %s\n", idx, total, name))
 	return time.Now()
 }
 
+func stageInfo(label string, value interface{}) {
+	fmt.Printf("  - %-16s %v\n", label+":", value)
+}
+
+func stageWarn(msg string) {
+	printColor(colorYellow, fmt.Sprintf("  ! %s\n", msg))
+}
+
+func stageError(msg string) {
+	printColor(colorRed, fmt.Sprintf("  x %s\n", msg))
+}
+
 func stageDone(start time.Time, detail string) {
-	fmt.Printf("      [ok] %s (%s)\n", detail, time.Since(start).Round(time.Millisecond))
+	printColor(colorGreen, fmt.Sprintf("  ok %s\n", detail))
+	stageInfo("elapsed", time.Since(start).Round(time.Millisecond))
+	fmt.Println()
+}
+
+func trimForConsole(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
+}
+
+func printFinding(f model.Finding) {
+	printColor(colorRed, "[HIT] Reflected XSS\n")
+	stageInfo("url", f.URL)
+	stageInfo("param", f.Param)
+	stageInfo("payload", trimForConsole(f.InjectedValue, 180))
+	stageInfo("context", f.Context)
+	stageInfo("evidence", trimForConsole(f.Indicator, 180))
+	fmt.Println()
+}
+
+func printSummary(cfg config.Config, targets int, report model.Report, start time.Time) {
+	printColor(colorGreen, "Summary\n")
+	stageInfo("output", filepath.Clean(cfg.OutDir))
+	stageInfo("targets", targets)
+	stageInfo("findings", report.TotalFindings)
+	stageInfo("elapsed", time.Since(start).Round(time.Millisecond))
 }
 
 func main() {
 	cfg := config.Parse()
 	start := time.Now()
 
-	fmt.Printf(colorBlue, logo)
-	fmt.Printf(colorBlue, fmt.Sprintf(
-		" profile=%s | domain=%s | out=%s | tools(waymore=%t,katana=%t,crawlergo=%t)\n",
-		cfg.Mode, cfg.Domain, cfg.OutDir, cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo,
-	))
+	printHeader(cfg)
 
 	client := fetch.New(cfg.Scanner.HTTPTimeoutSec)
 	notifier := notify.New(notify.Config{
@@ -64,7 +120,11 @@ func main() {
 	}, cfg.Verbose)
 	defer notifier.Close()
 
-	s1 := stageStart(1, "collecting URLs (waymore + katana in parallel, then crawlergo)")
+	totalStages := 4
+
+	s1 := stageStart(1, totalStages, "Collector")
+	stageInfo("sources", "waymore + katana parallel, crawlergo serial")
+	stageInfo("scope", cfg.Domain)
 	crawled, err := collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
 		UseWaymore:        cfg.Collector.UseWaymore,
 		UseKatana:         cfg.Collector.UseKatana,
@@ -78,46 +138,60 @@ func main() {
 		CrawlergoTimeout:  cfg.Collector.CrawlergoTimeout,
 	})
 	if err != nil {
-		fmt.Printf("collection failed: %v\n", err)
+		stageError(fmt.Sprintf("collection failed: %v", err))
 		os.Exit(1)
 	}
-	stageDone(s1, fmt.Sprintf("urls=%d js=%d", len(crawled.URLs), len(crawled.JSURLs)))
+	stageInfo("urls", len(crawled.URLs))
+	stageInfo("js urls", len(crawled.JSURLs))
+	stageDone(s1, "collection completed")
 
-	s2 := stageStart(2, "extracting endpoints/params from JS")
+	s2 := stageStart(2, totalStages, "JS Discovery")
+	stageInfo("js workers", cfg.Scanner.JSWorkers)
 	jsf := jsfinder.New(client, cfg.Domain, cfg.Scanner.JSWorkers, cfg.Verbose)
 	jsd := jsf.Discover(crawled.JSURLs)
 	if cfg.ParamDictFile != "" {
 		if extra, err := util.ReadLines(cfg.ParamDictFile); err == nil {
 			jsd.Params = util.UniqueStrings(append(jsd.Params, extra...))
-			if cfg.Verbose {
-				fmt.Printf("      merged custom params: +%d from %s\n", len(extra), cfg.ParamDictFile)
-			}
+			stageInfo("custom params", fmt.Sprintf("+%d from %s", len(extra), cfg.ParamDictFile))
 		} else {
-			fmt.Printf("      warning: failed to read param dict (%s): %v\n", cfg.ParamDictFile, err)
+			stageWarn(fmt.Sprintf("failed to read param dict (%s): %v", cfg.ParamDictFile, err))
 		}
 	}
-	stageDone(s2, fmt.Sprintf("endpoints=%d params=%d", len(jsd.Endpoints), len(jsd.Params)))
+	stageInfo("endpoints", len(jsd.Endpoints))
+	stageInfo("params", len(jsd.Params))
+	stageDone(s2, "js discovery completed")
 
-	s3 := stageStart(3, "generating scan targets")
+	s3 := stageStart(3, totalStages, "Target Generation")
+	stageInfo("param strategy", cfg.Target.ParamStrategy)
+	stageInfo("smart dedupe", cfg.Target.SmartDedupe)
 	targets := targetgen.BuildTargets(cfg.Domain, crawled.URLs, jsd.Endpoints, jsd.Params, targetgen.Options{
 		MaxParamsPerURL: cfg.Scanner.MaxParamsPerURL,
 		AllParams:       cfg.Scanner.AllParams,
 		SmartDedupe:     cfg.Target.SmartDedupe,
 		MaxPerPattern:   cfg.Target.MaxPerPattern,
+		ParamStrategy:   cfg.Target.ParamStrategy,
+		RelatedParams:   jsd.RelatedParams,
+		HighValueParams: cfg.Target.HighValueGlobalParams,
 	})
-	stageDone(s3, fmt.Sprintf("targets=%d", len(targets)))
+	stageInfo("targets", len(targets))
+	stageDone(s3, "target generation completed")
 
-	s4 := stageStart(4, "scanning reflected xss candidates")
+	s4 := stageStart(4, totalStages, "Scanner")
+	stageInfo("scan workers", cfg.Scanner.ScanWorkers)
+	stageInfo("max params/url", cfg.Scanner.MaxParamsPerURL)
 	scan := scanner.New(client, cfg.Scanner.ScanWorkers, cfg.Scanner.MaxParamsPerURL, cfg.Verbose)
 	scan.SetTemplateStrategy(cfg.Scanner.SamplePerGroup, cfg.Scanner.ExpandOnHit)
 	scan.SetBatchStrategy(cfg.Scanner.AllParams, cfg.Scanner.ParamBatchSize)
 	scan.SetWorkerSplit(cfg.Scanner.TargetWorkers, cfg.Scanner.QuickWorkers, cfg.Scanner.VerifyWorkers)
 	scan.SetShapeDedupe(cfg.Scanner.ShapeDedupeEnabled, cfg.Scanner.ShapeThreshold)
+	scan.SetParamStrategy(cfg.Target.ParamStrategy, cfg.Target.HighValueGlobalParams)
 	scan.SetFindingCallback(func(f model.Finding) {
+		printFinding(f)
 		notifier.EnqueueFinding(f)
 	})
 	report := scan.Scan(targets)
-	stageDone(s4, fmt.Sprintf("findings=%d", report.TotalFindings))
+	stageInfo("findings", report.TotalFindings)
+	stageDone(s4, "scan completed")
 
 	if err := output.WritePipelineArtifacts(
 		cfg.OutDir,
@@ -127,11 +201,9 @@ func main() {
 		jsd.Params,
 		report,
 	); err != nil {
-		fmt.Printf("write output failed: %v\n", err)
+		stageError(fmt.Sprintf("write output failed: %v", err))
 		os.Exit(1)
 	}
 
-	fmt.Printf(colorGreen, "\n[ok] Scan Completed\n")
-	fmt.Printf("Output: %s\n", filepath.Clean(cfg.OutDir))
-	fmt.Printf("Elapsed: %s\n", time.Since(start).Round(time.Millisecond))
+	printSummary(cfg, len(targets), report, start)
 }

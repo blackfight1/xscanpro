@@ -37,8 +37,10 @@ type CollectorConfig struct {
 }
 
 type TargetConfig struct {
-	SmartDedupe   bool `yaml:"smart_dedupe"`
-	MaxPerPattern int  `yaml:"max_per_pattern"`
+	SmartDedupe           bool     `yaml:"smart_dedupe"`
+	MaxPerPattern         int      `yaml:"max_per_pattern"`
+	ParamStrategy         string   `yaml:"param_strategy"`
+	HighValueGlobalParams []string `yaml:"high_value_global_params"`
 }
 
 type ScannerConfig struct {
@@ -145,7 +147,11 @@ func defaultConfig() Config {
 			CrawlergoTimeout: 1200,
 		},
 		Target: TargetConfig{
-			SmartDedupe: true,
+			SmartDedupe:   true,
+			ParamStrategy: "batch",
+			HighValueGlobalParams: []string{
+				"q", "query", "search", "keyword", "url", "redirect", "return", "next", "callback",
+			},
 		},
 		Scanner: ScannerConfig{
 			AllParams:          true,
@@ -261,6 +267,9 @@ func applyModeDefaults(cfg *Config) {
 			cfg.Target.MaxPerPattern = 2
 		}
 	case "deep":
+		if strings.TrimSpace(cfg.Target.ParamStrategy) == "" {
+			cfg.Target.ParamStrategy = "deep"
+		}
 		if cfg.Collector.KatanaConcurrency <= 0 {
 			cfg.Collector.KatanaConcurrency = 12
 		}
@@ -299,6 +308,9 @@ func applyModeDefaults(cfg *Config) {
 		}
 	default:
 		cfg.Mode = "balanced"
+		if strings.TrimSpace(cfg.Target.ParamStrategy) == "" {
+			cfg.Target.ParamStrategy = "batch"
+		}
 		if cfg.Collector.KatanaConcurrency <= 0 {
 			cfg.Collector.KatanaConcurrency = 16
 		}
@@ -347,6 +359,12 @@ func applyModeDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.Collector.CrawlergoBin) == "" {
 		cfg.Collector.CrawlergoBin = "crawlergo"
+	}
+	if strings.TrimSpace(cfg.Target.ParamStrategy) == "" {
+		cfg.Target.ParamStrategy = "batch"
+	}
+	if len(cfg.Target.HighValueGlobalParams) == 0 {
+		cfg.Target.HighValueGlobalParams = []string{"q", "query", "search", "keyword", "url", "redirect", "return", "next", "callback"}
 	}
 	if cfg.Notify.MaxPerSite <= 0 {
 		cfg.Notify.MaxPerSite = 10

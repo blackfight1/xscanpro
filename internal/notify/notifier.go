@@ -36,10 +36,10 @@ type Notifier struct {
 	client *http.Client
 	cfg    Config
 
-	mu              sync.Mutex
-	sentByHost      map[string]int
-	sentKeySet      map[string]struct{}
-	droppedCount    int
+	mu           sync.Mutex
+	sentByHost   map[string]int
+	sentKeySet   map[string]struct{}
+	droppedCount int
 
 	ch chan model.Finding
 	wg sync.WaitGroup
@@ -47,11 +47,11 @@ type Notifier struct {
 
 func New(cfg Config, verbose bool) *Notifier {
 	n := &Notifier{
-		enabled:         cfg.Enabled,
-		verbose:         verbose,
-		cfg:             cfg,
-		sentByHost:      map[string]int{},
-		sentKeySet:      map[string]struct{}{},
+		enabled:    cfg.Enabled,
+		verbose:    verbose,
+		cfg:        cfg,
+		sentByHost: map[string]int{},
+		sentKeySet: map[string]struct{}{},
 	}
 	if !cfg.Enabled {
 		return n
@@ -98,7 +98,7 @@ func (n *Notifier) Close() {
 		n.mu.Lock()
 		dropped := n.droppedCount
 		n.mu.Unlock()
-		fmt.Printf("      notify summary: queue_dropped=%d\n", dropped)
+		fmt.Printf("  - notify summary:  queue_dropped=%d\n", dropped)
 	}
 }
 
@@ -115,7 +115,7 @@ func (n *Notifier) loop() {
 		if err := n.sendDingTalk(f, host); err != nil {
 			n.releaseSend(host, f)
 			if n.verbose {
-				fmt.Printf("      notify warning: %v\n", err)
+				fmt.Printf("  ! notify warning:  %v\n", err)
 			}
 		}
 	}

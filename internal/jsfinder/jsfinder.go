@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,7 @@ func New(client *fetch.Client, domain string, workers int, verbose bool) *Finder
 func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 	jsURLs = util.UniqueStrings(jsURLs)
 	var out model.JSDiscovery
+	out.RelatedParams = map[string][]string{}
 	sem := make(chan struct{}, f.workerCount)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -107,7 +109,7 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 			select {
 			case <-ticker.C:
 				p := atomic.LoadInt32(&processed)
-				fmt.Printf("\r      jsfinder progress: %d/%d", p, total)
+				fmt.Printf("\r  > js progress: %d/%d", p, total)
 			case <-done:
 				return
 			}
@@ -151,18 +153,22 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 			body = normalize(body)
 			body = tryDecodeBase64Strings(body)
 			endpoints, params := f.extractFromJS(u, body)
+			relatedKeys := relatedKeysFromJS(u, endpoints)
 
 			mu.Lock()
 			out.Endpoints = append(out.Endpoints, endpoints...)
 			out.Params = append(out.Params, params...)
+			for _, key := range relatedKeys {
+				out.RelatedParams[key] = append(out.RelatedParams[key], params...)
+			}
 			mu.Unlock()
 		}(jsURL)
 	}
 	wg.Wait()
 	close(done)
-	fmt.Printf("\r      jsfinder progress: %d/%d\n", total, total)
+	fmt.Printf("\r  > js progress: %d/%d\n", total, total)
 	if f.verbose {
-		fmt.Printf("      jsfinder dedupe: content_hash_skipped=%d, large_js_downgraded=%d\n",
+		fmt.Printf("  - js dedupe:       content_hash_skipped=%d, large_js_downgraded=%d\n",
 			atomic.LoadInt32(&dedupedByHash),
 			atomic.LoadInt32(&downgradedLarge),
 		)
@@ -170,6 +176,49 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 
 	out.Endpoints = util.UniqueStrings(out.Endpoints)
 	out.Params = util.UniqueStrings(out.Params)
+	for key, params := range out.RelatedParams {
+		out.RelatedParams[key] = util.UniqueStrings(params)
+	}
+	return out
+}
+
+func relatedKeysFromJS(origin string, endpoints []string) []string {
+	set := map[string]struct{}{}
+	for _, key := range relatedKeysFromURL(origin) {
+		set[key] = struct{}{}
+	}
+	for _, endpoint := range endpoints {
+		for _, key := range relatedKeysFromURL(endpoint) {
+			set[key] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func relatedKeysFromURL(raw string) []string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	set := map[string]struct{}{
+		host + "|/": {},
+	}
+	for _, word := range extractPathWords(raw) {
+		if cp := cleanParam(word); cp != "" && !shouldExcludeParam(cp) {
+			set[host+"|"+cp] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
 	return out
 }
 

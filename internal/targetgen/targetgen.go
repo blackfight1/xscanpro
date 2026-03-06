@@ -16,6 +16,9 @@ type Options struct {
 	AllParams       bool
 	SmartDedupe     bool
 	MaxPerPattern   int
+	ParamStrategy   string
+	RelatedParams   map[string][]string
+	HighValueParams []string
 }
 
 var numRegex = regexp.MustCompile(`\d+`)
@@ -30,8 +33,14 @@ func BuildTargets(domain string, urls []string, endpoints []string, globalParams
 		opt.MaxPerPattern = 4
 	}
 
+	strategy := strings.ToLower(strings.TrimSpace(opt.ParamStrategy))
+	if strategy != "batch" && strategy != "deep" {
+		strategy = "batch"
+	}
 	globalParams = util.UniqueStrings(globalParams)
 	sort.Strings(globalParams)
+	opt.HighValueParams = util.UniqueStrings(opt.HighValueParams)
+	sort.Strings(opt.HighValueParams)
 
 	targets := make([]model.ScanTarget, 0, len(urls)+len(endpoints))
 	seenURL := map[string]struct{}{}
@@ -53,7 +62,7 @@ func BuildTargets(domain string, urls []string, endpoints []string, globalParams
 			continue
 		}
 		seenURL[canon] = struct{}{}
-		params := buildParamList(canon, globalParams, opt)
+		params := buildParamList(canon, globalParams, strategy, opt)
 		targets = append(targets, model.ScanTarget{
 			URL:    canon,
 			Params: params,
@@ -76,7 +85,7 @@ func BuildTargets(domain string, urls []string, endpoints []string, globalParams
 			continue
 		}
 
-		params := buildParamList(canon, globalParams, opt)
+		params := buildParamList(canon, globalParams, strategy, opt)
 
 		if opt.SmartDedupe {
 			key := patternKey(canon, params)
@@ -95,7 +104,7 @@ func BuildTargets(domain string, urls []string, endpoints []string, globalParams
 	return targets
 }
 
-func buildParamList(rawURL string, globalParams []string, opt Options) []string {
+func buildParamList(rawURL string, globalParams []string, strategy string, opt Options) []string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil
@@ -104,8 +113,17 @@ func buildParamList(rawURL string, globalParams []string, opt Options) []string 
 	for k := range u.Query() {
 		paramSet[k] = struct{}{}
 	}
-	for _, p := range globalParams {
-		paramSet[p] = struct{}{}
+	if strategy == "batch" {
+		for _, p := range relatedParamsForURL(rawURL, opt.RelatedParams) {
+			paramSet[p] = struct{}{}
+		}
+		for _, p := range opt.HighValueParams {
+			paramSet[p] = struct{}{}
+		}
+	} else {
+		for _, p := range globalParams {
+			paramSet[p] = struct{}{}
+		}
 	}
 	params := make([]string, 0, len(paramSet))
 	for p := range paramSet {
@@ -116,6 +134,83 @@ func buildParamList(rawURL string, globalParams []string, opt Options) []string 
 		params = params[:opt.MaxParamsPerURL]
 	}
 	return params
+}
+
+func relatedParamsForURL(rawURL string, related map[string][]string) []string {
+	if len(related) == 0 {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	set := map[string]struct{}{}
+	for _, p := range related[host+"|/"] {
+		set[p] = struct{}{}
+	}
+	for _, word := range pathWords(rawURL) {
+		for _, p := range related[host+"|"+word] {
+			set[p] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func pathWords(rawURL string) []string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	parts := strings.Split(u.Path, "/")
+	set := map[string]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if i := strings.LastIndex(part, "."); i > 0 {
+			part = part[:i]
+		}
+		for _, sub := range splitCamelSnake(part) {
+			sub = strings.ToLower(numRegex.ReplaceAllString(sub, ""))
+			sub = strings.Trim(sub, "-_.")
+			if len(sub) >= 2 {
+				set[sub] = struct{}{}
+			}
+		}
+		part = strings.ToLower(numRegex.ReplaceAllString(part, ""))
+		part = strings.Trim(part, "-_.")
+		if len(part) >= 2 {
+			set[part] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func splitCamelSnake(s string) []string {
+	if strings.Contains(s, "_") {
+		return strings.Split(s, "_")
+	}
+	re := regexp.MustCompile(`[A-Z][a-z]+|[a-z]+|[A-Z]+`)
+	m := re.FindAllString(s, -1)
+	out := make([]string, 0, len(m))
+	for _, x := range m {
+		if len(x) >= 2 {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func patternKey(raw string, params []string) string {

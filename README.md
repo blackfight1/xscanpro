@@ -1,4 +1,4 @@
-﻿# xscanpro
+# xscanpro
 
 A custom scanning pipeline inspired by:
 
@@ -23,6 +23,8 @@ It uses neutral markers and context-aware verification.
 - Optional DingTalk notification when findings are produced (with per-site cap)
 - Quick probe with GET batch params (default batch size: 45)
 - Verify only hit params in second stage (with same-batch parameter context to improve combo detection)
+- In `batch` mode, scan-stage hidden params are limited to small high-value additions only
+- In `batch` mode, verify stage uses fewer representative probes and stops on first strong hit
 - Context-aware semantic probes in second stage (`test html` / `test attributes` / `special attributes` / `script sub-types` / `comment`)
 - Similar-page strategy:
   - template grouping
@@ -37,6 +39,22 @@ It uses neutral markers and context-aware verification.
 ```powershell
 cd xscanpro
 go run .\cmd\scanner\main.go -config .\config.yaml
+```
+
+## Binary
+
+Linux amd64 executable:
+
+```text
+dist/xscanpro-linux-amd64
+```
+
+Manual build example:
+
+```powershell
+$env:GOOS='linux'
+$env:GOARCH='amd64'
+go build -o .\dist\xscanpro-linux-amd64 .\cmd\scanner
 ```
 
 ## Minimal CLI flags
@@ -69,6 +87,9 @@ Common keys:
 - `collector.crawlergo_robots_path`
 - `collector.crawlergo_timeout_sec`
 - `target.smart_dedupe`
+- `target.param_strategy`
+- `target.high_value_global_params`
+- `batch` mode also keeps scan-stage hidden params and verify probes more conservative.
 - `scanner.all_params`
 - `scanner.param_batch_size`
 - `scanner.sample_per_group`
@@ -91,6 +112,16 @@ Notification behavior:
 
 ## Output
 
+Terminal output style:
+
+- startup summary (mode/domain/output/workers/notify)
+- stage blocks for collector / JS discovery / target generation / scanner
+- inline progress lines for JS and scan phases
+- highlighted `[HIT]` blocks for findings
+- final summary block
+
+Artifacts:
+
 - `urls.txt`
 - `js_urls.txt`
 - `endpoints.txt`
@@ -108,9 +139,14 @@ Notification behavior:
 2. Extract endpoints and params from JS
 3. Build scan targets
    - keep crawled URLs directly (avoid dropping known vulnerable links)
+   - `batch` strategy: URL params + related JS params + high-value globals
+   - `deep` strategy: use nearly all discovered params
 4. Scan
    - template sample phase
    - GET batch quick probe
+   - `batch`: hidden params are filtered to high-value names and capped
+   - `batch`: verify probes are reduced to representative contexts and stop on first hit
+   - `deep`: hidden params and verify probes keep broad coverage
    - verify hit params
 5. Write output files
 6. Optional notification
@@ -122,4 +158,8 @@ Notification behavior:
 - Main focus is reflected XSS.
 - Results should be manually validated in authorized scope.
 - When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
+- `balanced`/`fast` are intended to use `batch` parameter strategy by default.
+- `deep` mode is intended to use `deep` parameter strategy by default.
+
+
 

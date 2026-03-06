@@ -54,20 +54,24 @@ type semanticProbe struct {
 }
 
 type Scanner struct {
-	client             *fetch.Client
-	workerCount        int
-	quickWorkers       int
-	verifyWorkers      int
-	targetWorkers      int
-	maxParams          int
-	allParams          bool
-	paramBatchSize     int
-	samplePerGroup     int
-	expandOnHit        bool
-	shapeDedupeEnabled bool
-	shapeThreshold     int
-	onFinding          func(model.Finding)
-	verbose            bool
+	client              *fetch.Client
+	workerCount         int
+	quickWorkers        int
+	verifyWorkers       int
+	targetWorkers       int
+	maxParams           int
+	allParams           bool
+	paramBatchSize      int
+	samplePerGroup      int
+	expandOnHit         bool
+	shapeDedupeEnabled  bool
+	shapeThreshold      int
+	paramStrategy       string
+	highValueParamSet   map[string]struct{}
+	batchHiddenParamCap int
+	batchVerifyProbeCap int
+	onFinding           func(model.Finding)
+	verbose             bool
 }
 
 type scopedTarget struct {
@@ -114,19 +118,23 @@ func New(client *fetch.Client, workers, maxParams int, verbose bool) *Scanner {
 		target = 1
 	}
 	return &Scanner{
-		client:             client,
-		workerCount:        workers,
-		quickWorkers:       quick,
-		verifyWorkers:      verify,
-		targetWorkers:      target,
-		maxParams:          maxParams,
-		allParams:          true,
-		paramBatchSize:     45,
-		samplePerGroup:     0,
-		expandOnHit:        true,
-		shapeDedupeEnabled: true,
-		shapeThreshold:     4,
-		verbose:            verbose,
+		client:              client,
+		workerCount:         workers,
+		quickWorkers:        quick,
+		verifyWorkers:       verify,
+		targetWorkers:       target,
+		maxParams:           maxParams,
+		allParams:           true,
+		paramBatchSize:      45,
+		samplePerGroup:      0,
+		expandOnHit:         true,
+		shapeDedupeEnabled:  true,
+		shapeThreshold:      4,
+		paramStrategy:       "deep",
+		highValueParamSet:   map[string]struct{}{},
+		batchHiddenParamCap: 6,
+		batchVerifyProbeCap: 4,
+		verbose:             verbose,
 	}
 }
 
@@ -163,6 +171,21 @@ func (s *Scanner) SetShapeDedupe(enabled bool, threshold int) {
 func (s *Scanner) SetFindingCallback(fn func(model.Finding)) {
 	s.onFinding = fn
 }
+func (s *Scanner) SetParamStrategy(strategy string, highValueParams []string) {
+	strategy = strings.ToLower(strings.TrimSpace(strategy))
+	if strategy != "batch" && strategy != "deep" {
+		strategy = "deep"
+	}
+	s.paramStrategy = strategy
+	s.highValueParamSet = map[string]struct{}{}
+	for _, p := range highValueParams {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		s.highValueParamSet[p] = struct{}{}
+	}
+}
 
 func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 	if len(targets) == 0 {
@@ -173,7 +196,7 @@ func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 	phase1, phase2, totalGrouped := buildScanPhases(groups, s.samplePerGroup)
 
 	if s.verbose {
-		fmt.Printf("      templates: groups=%d, sample_targets=%d, deferred=%d\n", len(groups), len(phase1), len(phase2))
+		fmt.Printf("  - templates:       groups=%d, sample_targets=%d, deferred=%d\n", len(groups), len(phase1), len(phase2))
 	}
 
 	findings1, hitGroups := s.scanBatch("sample", phase1)
@@ -184,7 +207,7 @@ func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 		expand := filterByGroup(phase2, hitGroups)
 		scanned += len(expand)
 		if s.verbose {
-			fmt.Printf("      expand: hit_groups=%d, expand_targets=%d\n", len(hitGroups), len(expand))
+			fmt.Printf("  - expand:          hit_groups=%d, expand_targets=%d\n", len(hitGroups), len(expand))
 		}
 		findings2, _ := s.scanBatch("expand", expand)
 		findings = append(findings, findings2...)
@@ -202,7 +225,7 @@ func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 		if skipped < 0 {
 			skipped = 0
 		}
-		fmt.Printf("      summary: scanned=%d/%d, skipped_similar=%d, findings=%d\n", scanned, totalGrouped, skipped, len(findings))
+		fmt.Printf("  - scan summary:    scanned=%d/%d, skipped_similar=%d, findings=%d\n", scanned, totalGrouped, skipped, len(findings))
 	}
 
 	return model.Report{
@@ -331,7 +354,7 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 		for {
 			select {
 			case <-ticker.C:
-				fmt.Printf("\r      [%s] targets %d/%d | skip-shape %d | quick-batch %d/%d | params %d | verify %d | findings %d",
+				fmt.Printf("\r  > phase=%s | targets %d/%d | skip-shape %d | quick %d/%d | params %d | verify %d | findings %d",
 					label,
 					atomic.LoadInt32(&processedTargets),
 					int32(len(targets)),
@@ -440,7 +463,7 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 	collectDone.Wait()
 
 	close(stopProgress)
-	fmt.Printf("\r      [%s] targets %d/%d | skip-shape %d | quick-batch %d/%d | params %d | verify %d | findings %d\n",
+	fmt.Printf("\r  > phase=%s | targets %d/%d | skip-shape %d | quick %d/%d | params %d | verify %d | findings %d\n",
 		label,
 		processedTargets,
 		int32(len(targets)),
@@ -660,7 +683,7 @@ func (s *Scanner) prepareParams(target model.ScanTarget) ([]string, bool) {
 	for _, p := range target.Params {
 		paramSet[p] = struct{}{}
 	}
-	for _, p := range discoverHiddenParams(baseline) {
+	for _, p := range s.filterHiddenParams(discoverHiddenParams(baseline), paramSet) {
 		paramSet[p] = struct{}{}
 	}
 
@@ -673,6 +696,38 @@ func (s *Scanner) prepareParams(target model.ScanTarget) ([]string, bool) {
 		params = params[:s.maxParams]
 	}
 	return params, len(params) > 0
+}
+
+func (s *Scanner) filterHiddenParams(hidden []string, existing map[string]struct{}) []string {
+	if len(hidden) == 0 {
+		return nil
+	}
+	if s.paramStrategy != "batch" {
+		return util.UniqueStrings(hidden)
+	}
+	out := make([]string, 0, len(hidden))
+	seen := map[string]struct{}{}
+	for _, p := range hidden {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		if _, ok := existing[p]; ok {
+			continue
+		}
+		if _, ok := s.highValueParamSet[p]; !ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+		if s.batchHiddenParamCap > 0 && len(out) >= s.batchHiddenParamCap {
+			break
+		}
+	}
+	return out
 }
 
 func (s *Scanner) quickReflectBatch(task quickTask) []verifyTask {
@@ -725,18 +780,10 @@ func (s *Scanner) quickReflectBatch(task quickTask) []verifyTask {
 }
 
 func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
-	probes := buildSemanticProbes(task.contexts)
+	probes := s.selectVerifyProbes(buildSemanticProbes(task.contexts))
 	if len(probes) == 0 {
 		return model.Finding{}, false
 	}
-
-	type candidate struct {
-		ev      evidence
-		url     string
-		payload string
-		lines   []int
-	}
-	var hits []candidate
 
 	for _, p := range probes {
 		mutatedProbe, err := setQueryWithContext(task.baseURL, task.param, p.Payload, task.batchCtx)
@@ -759,31 +806,48 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 		if strings.TrimSpace(reason) != "" {
 			indicator = reason
 		}
-		hits = append(hits, candidate{
-			ev: evidence{
-				Context:   p.Context,
-				Indicator: indicator,
-			},
-			url:     mutatedProbe,
-			payload: p.Payload,
-			lines:   lines,
-		})
+		return model.Finding{
+			URL:             mutatedProbe,
+			Param:           task.param,
+			InjectedValue:   p.Payload,
+			Context:         p.Context,
+			ReflectedLines:  lines,
+			Indicator:       indicator,
+			SuggestedAction: "Manual verify with controlled payloads in authorized environment.",
+		}, true
 	}
 
-	if len(hits) == 0 {
-		return model.Finding{}, false
-	}
-	best := hits[0]
+	return model.Finding{}, false
+}
 
-	return model.Finding{
-		URL:             best.url,
-		Param:           task.param,
-		InjectedValue:   best.payload,
-		Context:         best.ev.Context,
-		ReflectedLines:  best.lines,
-		Indicator:       best.ev.Indicator,
-		SuggestedAction: "Manual verify with controlled payloads in authorized environment.",
-	}, true
+func (s *Scanner) selectVerifyProbes(probes []semanticProbe) []semanticProbe {
+	if len(probes) == 0 {
+		return nil
+	}
+	if s.paramStrategy != "batch" {
+		return probes
+	}
+	out := make([]semanticProbe, 0, len(probes))
+	seenCtx := map[string]struct{}{}
+	for _, p := range probes {
+		ctxKey := verifyContextKey(p.Context)
+		if _, ok := seenCtx[ctxKey]; ok {
+			continue
+		}
+		seenCtx[ctxKey] = struct{}{}
+		out = append(out, p)
+		if s.batchVerifyProbeCap > 0 && len(out) >= s.batchVerifyProbeCap {
+			break
+		}
+	}
+	return out
+}
+
+func verifyContextKey(ctx string) string {
+	if i := strings.IndexByte(ctx, ':'); i > 0 {
+		return ctx[:i]
+	}
+	return ctx
 }
 
 func buildSemanticProbes(contexts []string) []semanticProbe {
@@ -806,31 +870,31 @@ func buildSemanticProbes(contexts []string) []semanticProbe {
 				Context:   "script:string_break",
 				Payload:   `";` + token + `;//`,
 				Token:     token,
-				Indicator: "script \u5b57\u7b26\u4e32\u4e0a\u4e0b\u6587\u53ef\u89c1\u5f15\u53f7\u95ed\u5408\u4e0e\u8bed\u53e5\u6ce8\u5165\u8ff9\u8c61",
+				Indicator: "script string context shows quote-break and statement-injection signs",
 			})
 			add(semanticProbe{
 				Context:   "script:string_break",
 				Payload:   `';` + token + `;//`,
 				Token:     token,
-				Indicator: "script 单引号字符串上下文出现闭合与注入迹象",
+				Indicator: "script single-quoted string appears breakable and injectable",
 			})
 			add(semanticProbe{
 				Context:   "script:line_comment",
 				Payload:   "\n;" + token + ";//",
 				Token:     token,
-				Indicator: "script 单行注释上下文出现换行逃逸迹象",
+				Indicator: "script line comment appears escapable by newline",
 			})
 			add(semanticProbe{
 				Context:   "script:block_comment",
 				Payload:   "*/" + token + ";/*",
 				Token:     token,
-				Indicator: "script 块注释上下文出现闭合与逃逸迹象",
+				Indicator: "script block comment appears closable and escapable",
 			})
 			add(semanticProbe{
 				Context:   "script:identifier",
 				Payload:   token,
 				Token:     token,
-				Indicator: "script \u6807\u8bc6\u7b26\u4f4d\u7f6e\u51fa\u73b0\u53ef\u63a7\u56de\u663e",
+				Indicator: "script identifier position appears controllable",
 			})
 		case "attribute_value":
 			add(semanticProbe{
@@ -968,9 +1032,9 @@ func matchScriptContext(p semanticProbe, resp string) (bool, string) {
 			if strings.Contains(code, p.Payload) {
 				idRe := regexp.MustCompile(`(?m)[;(\s]` + regexp.QuoteMeta(p.Token) + `\s*;`)
 				if idRe.MatchString(code) {
-					return true, "script \u5b57\u7b26\u4e32\u5df2\u95ed\u5408\u4e14\u56de\u663e\u4f4d\u4e8e\u53ef\u6267\u884c\u8bed\u53e5\u4f4d\u7f6e"
+					return true, "script string is closed and reflected in executable statement position"
 				}
-				return true, "script 字符串疑似可闭合，需人工确认是否可执行"
+				return true, "script string appears breakable and should be reviewed manually"
 			}
 		case "script:line_comment":
 			if strings.Contains(code, p.Payload) || strings.Contains(code, "\n;"+p.Token+";//") {

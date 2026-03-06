@@ -6,8 +6,9 @@ type CrawlResult struct {
 }
 
 type JSDiscovery struct {
-	Endpoints []string
-	Params    []string
+	Endpoints     []string
+	Params        []string
+	RelatedParams map[string][]string
 }
 
 type ScanTarget struct {

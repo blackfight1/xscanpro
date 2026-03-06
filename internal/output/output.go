@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,16 +14,18 @@ import (
 )
 
 type findingView struct {
-	URL      string `json:"url"`
-	Param    string `json:"param"`
-	Payload  string `json:"payload"`
-	Context  string `json:"context"`
-	Evidence string `json:"evidence"`
+	URL         string `json:"url"`
+	Param       string `json:"param"`
+	Payload     string `json:"payload"`
+	Context     string `json:"context"`
+	Evidence    string `json:"evidence"`
+	Occurrences int    `json:"occurrences"`
 }
 
 type reportView struct {
 	TotalTargets  int           `json:"total_targets"`
 	TotalFindings int           `json:"total_findings"`
+	RawFindings   int           `json:"raw_findings"`
 	Findings      []findingView `json:"findings"`
 }
 
@@ -43,19 +46,12 @@ func WritePipelineArtifacts(outDir string, urls, jsURLs, endpoints, params []str
 		return err
 	}
 
+	viewFindings := dedupeForReport(report.Findings)
 	view := reportView{
 		TotalTargets:  report.TotalTargets,
-		TotalFindings: report.TotalFindings,
-		Findings:      make([]findingView, 0, len(report.Findings)),
-	}
-	for _, f := range report.Findings {
-		view.Findings = append(view.Findings, findingView{
-			URL:      f.URL,
-			Param:    f.Param,
-			Payload:  f.InjectedValue,
-			Context:  f.Context,
-			Evidence: f.Indicator,
-		})
+		TotalFindings: len(viewFindings),
+		RawFindings:   report.TotalFindings,
+		Findings:      viewFindings,
 	}
 
 	b, err := json.MarshalIndent(view, "", "  ")
@@ -72,7 +68,8 @@ func renderMarkdownReport(r reportView) string {
 	var sb strings.Builder
 	sb.WriteString("# XSS Scan Report\n\n")
 	sb.WriteString(fmt.Sprintf("- Total Targets: %d\n", r.TotalTargets))
-	sb.WriteString(fmt.Sprintf("- Total Findings: %d\n\n", r.TotalFindings))
+	sb.WriteString(fmt.Sprintf("- Total Findings: %d\n", r.TotalFindings))
+	sb.WriteString(fmt.Sprintf("- Raw Findings: %d\n\n", r.RawFindings))
 
 	if len(r.Findings) == 0 {
 		sb.WriteString("## Findings\n\nNo findings.\n")
@@ -98,9 +95,65 @@ func renderMarkdownReport(r reportView) string {
 		sb.WriteString(fmt.Sprintf("- Payload: `%s`\n", f.Payload))
 		sb.WriteString(fmt.Sprintf("- Context: `%s`\n", f.Context))
 		sb.WriteString(fmt.Sprintf("- Evidence: %s\n", f.Evidence))
+		sb.WriteString(fmt.Sprintf("- Occurrences: %d\n", f.Occurrences))
 		sb.WriteString(fmt.Sprintf("- Suggestion: %s\n\n", suggestionForFinding(f)))
 	}
 	return sb.String()
+}
+
+func dedupeForReport(in []model.Finding) []findingView {
+	if len(in) == 0 {
+		return nil
+	}
+	type agg struct {
+		view findingView
+	}
+	byKey := map[string]agg{}
+	for _, f := range in {
+		key := reportKey(f)
+		cur, ok := byKey[key]
+		if !ok {
+			byKey[key] = agg{
+				view: findingView{
+					URL:         f.URL,
+					Param:       f.Param,
+					Payload:     f.InjectedValue,
+					Context:     f.Context,
+					Evidence:    f.Indicator,
+					Occurrences: 1,
+				},
+			}
+			continue
+		}
+		cur.view.Occurrences++
+		if len(strings.TrimSpace(f.Indicator)) > len(strings.TrimSpace(cur.view.Evidence)) {
+			cur.view.Evidence = f.Indicator
+			cur.view.Payload = f.InjectedValue
+			cur.view.Context = f.Context
+			cur.view.URL = f.URL
+		}
+		byKey[key] = cur
+	}
+	out := make([]findingView, 0, len(byKey))
+	for _, a := range byKey {
+		out = append(out, a.view)
+	}
+	return out
+}
+
+func reportKey(f model.Finding) string {
+	u, err := url.Parse(strings.TrimSpace(f.URL))
+	host := ""
+	path := strings.TrimSpace(f.URL)
+	if err == nil {
+		host = strings.ToLower(strings.TrimSpace(u.Hostname()))
+		path = strings.TrimSpace(u.Path)
+		if path == "" {
+			path = "/"
+		}
+	}
+	param := strings.ToLower(strings.TrimSpace(f.Param))
+	return host + "|" + path + "|" + param
 }
 
 func suggestionForFinding(f findingView) string {

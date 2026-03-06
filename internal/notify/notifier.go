@@ -156,7 +156,8 @@ func (n *Notifier) reserveSend(host string, f model.Finding) bool {
 		param = "{empty}"
 	}
 
-	uniq := host + "|" + param
+	path := pathOf(f.URL)
+	uniq := host + "|" + path + "|" + param
 	if _, exists := n.sentKeySet[uniq]; exists {
 		return false
 	}
@@ -178,7 +179,8 @@ func (n *Notifier) releaseSend(host string, f model.Finding) {
 		param = "{empty}"
 	}
 
-	uniq := host + "|" + param
+	path := pathOf(f.URL)
+	uniq := host + "|" + path + "|" + param
 	delete(n.sentKeySet, uniq)
 }
 

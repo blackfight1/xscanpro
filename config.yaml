@@ -1,0 +1,140 @@
+# Root domain for waymore.
+# Example: vulnweb.com
+# Required.
+domain: vulnweb.com
+
+# Subdomain URL list file for katana/crawlergo input.
+# Required when collector.use_katana=true or collector.use_crawlergo=true.
+subs_file: subs.txt
+
+# Output directory for all generated artifacts.
+out_dir: output
+
+# Scan profile presets: fast | balanced | deep
+# Presets apply only when the corresponding value is 0/empty.
+mode: balanced
+
+# Optional custom parameter dictionary file.
+# Leave empty string to disable.
+param_dict_file: ""
+
+# Enable verbose logs.
+verbose: false
+
+notify:
+  # Enable notification when findings are produced.
+  enabled: true
+
+  # Notification provider (currently only dingtalk is supported).
+  provider: dingtalk
+
+  # Max notification count per site(hostname) in one scan task.
+  max_per_site: 10
+
+  # Internal async queue size for realtime notifications.
+  queue_size: 200
+
+  # HTTP timeout for notification requests (seconds).
+  timeout_sec: 8
+
+  dingtalk:
+    # DingTalk bot webhook URL.
+    webhook: ""
+
+    # Optional DingTalk signing secret.
+    # Leave empty if your bot does not require signature.
+    secret: ""
+
+collector:
+  # Enable waymore collector.
+  use_waymore: true
+
+  # Enable katana collector.
+  use_katana: true
+
+  # Enable crawlergo collector.
+  # Execution order: waymore+katana (parallel) -> crawlergo (serial).
+  use_crawlergo: true
+
+  # Katana crawling concurrency.
+  # 0 means use mode default.
+  katana_concurrency: 20
+
+  # Katana crawl depth.
+  # 0 means use mode default.
+  katana_depth: 3
+
+  # Crawlergo executable name or absolute path.
+  crawlergo_bin: crawlergo
+
+  # Chromium/Chrome path required by crawlergo.
+  crawlergo_chrome_path: /usr/bin/google-chrome
+
+  # Crawlergo max tab count (-t).
+  # 0 means use mode default.
+  crawlergo_tabs: 10
+
+  # Enable crawlergo robots path discovery (--robots-path).
+  crawlergo_robots_path: true
+
+  # Crawlergo timeout in seconds.
+  # 0 means use mode default.
+  crawlergo_timeout_sec: 1200
+
+target:
+  # Enable target smart dedupe.
+  # Groups similar URLs and limits repeated patterns.
+  smart_dedupe: true
+
+  # Max URL samples kept per target pattern.
+  # 0 means use mode default.
+  max_per_pattern: 10
+
+scanner:
+  # JS fetching/extraction worker count.
+  # 0 means use mode default.
+  js_workers: 16
+
+  # Total scanner workers (used for auto split when custom split is not set).
+  # 0 means use mode default.
+  scan_workers: 24
+
+  # Optional custom worker split for scanner pipeline.
+  # If all three are >0, they override auto split.
+  # target_workers: prefetch baseline + param preparation
+  # quick_workers: batch reflection probing
+  # verify_workers: second-stage evidence verification
+  target_workers: 0
+  quick_workers: 0
+  verify_workers: 0
+
+  # HTTP timeout in seconds.
+  # 0 means use mode default.
+  http_timeout_sec: 15
+
+  # Max params tested per URL when all_params=false.
+  # Ignored when all_params=true.
+  max_params_per_url: 20
+
+  # Test all discovered params for each URL.
+  # true = full param coverage, false = respect max_params_per_url.
+  all_params: true
+
+  # Batch size for quick GET probing.
+  # Example: 45 means probe 45 params in one request.
+  param_batch_size: 45
+
+  # Similar-page strategy: sample N targets per template group in phase-1.
+  # 0 means disable template sampling (xscan-like behavior).
+  sample_per_group: 0
+
+  # After phase-1, expand scan to remaining targets only for hit groups.
+  expand_on_hit: true
+
+  # Enable request value-shape dedupe in scan stage.
+  # This reduces repeated scanning of semantically similar requests.
+  shape_dedupe_enabled: true
+
+  # Max samples kept per value-shape fingerprint before skipping.
+  # Lower = faster, Higher = more coverage.
+  shape_threshold: 15

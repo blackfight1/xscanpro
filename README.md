@@ -1,0 +1,125 @@
+﻿# xscanpro
+
+A custom scanning pipeline inspired by:
+
+- crawl.go (URL collection)
+- linkfinder.go (JS endpoint and param discovery)
+- xscan (reflected XSS detection and dedupe ideas)
+
+This project does not reuse xscan payload lists.
+It uses neutral markers and context-aware verification.
+
+## Features
+
+- URL collection with three tools:
+  - waymore (root domain input)
+  - katana (subdomain URL list input)
+  - crawlergo (subdomain URL list input)
+- Collector scheduling strategy:
+  - waymore + katana run in parallel
+  - crawlergo runs after them (serial, lower peak memory pressure)
+- JS endpoint and parameter extraction
+- Reflected XSS focused scanning
+- Optional DingTalk notification when findings are produced (with per-site cap)
+- Quick probe with GET batch params (default batch size: 45)
+- Verify only hit params in second stage (with same-batch parameter context to improve combo detection)
+- Context-aware semantic probes in second stage (`test html` / `test attributes` / `special attributes` / `script sub-types` / `comment`)
+- Similar-page strategy:
+  - template grouping
+  - sample scan first (or disable by `sample_per_group: 0`)
+  - expand only on hit groups
+  - query-bearing URLs are always scanned in phase-1
+- Value-shape dedupe to skip semantically similar requests
+  - request-level fingerprint threshold dedupe (xscan-like)
+
+## Run
+
+```powershell
+cd xscanpro
+go run .\cmd\scanner\main.go -config .\config.yaml
+```
+
+## Minimal CLI flags
+
+```powershell
+-config config.yaml   # config file path
+-domain example.com   # root domain for waymore -i
+-i subs.txt           # subdomain URL list file for katana/crawlergo
+-out output           # output directory
+-mode balanced        # fast | balanced | deep
+-v                    # verbose logs
+```
+
+Notes:
+
+- Advanced settings are configured in `config.yaml`.
+- CLI is intentionally minimal.
+
+## Config
+
+Edit `config.yaml` (fully commented).
+Common keys:
+
+- `collector.use_waymore`
+- `collector.use_katana`
+- `collector.use_crawlergo`
+- `collector.crawlergo_bin`
+- `collector.crawlergo_chrome_path`
+- `collector.crawlergo_tabs`
+- `collector.crawlergo_robots_path`
+- `collector.crawlergo_timeout_sec`
+- `target.smart_dedupe`
+- `scanner.all_params`
+- `scanner.param_batch_size`
+- `scanner.sample_per_group`
+- `scanner.expand_on_hit`
+- `scanner.shape_dedupe_enabled`
+- `scanner.shape_threshold`
+- `scanner.target_workers`
+- `scanner.quick_workers`
+- `scanner.verify_workers`
+- `notify.enabled`
+- `notify.max_per_site`
+- `notify.dingtalk.webhook`
+- `notify.dingtalk.secret`
+
+Notification behavior:
+
+- Notifications are sent when findings are produced during scan.
+- To avoid flooding, each site (hostname) sends at most `notify.max_per_site` messages in one run.
+- Severity grading is not used in notification or reporting.
+
+## Output
+
+- `urls.txt`
+- `js_urls.txt`
+- `endpoints.txt`
+- `params.txt`
+- `findings.json`
+- `xss_report.md`
+
+## Current scan flow
+
+1. Collect URLs
+   - waymore with root domain
+   - katana with subdomain URL list file
+   - crawlergo with subdomain URL list file
+   - merge and dedupe all collector outputs
+2. Extract endpoints and params from JS
+3. Build scan targets
+   - keep crawled URLs directly (avoid dropping known vulnerable links)
+4. Scan
+   - template sample phase
+   - GET batch quick probe
+   - verify hit params
+5. Write output files
+6. Optional notification
+   - push findings to DingTalk webhook
+   - each site sends at most `notify.max_per_site` notifications
+
+## Important
+
+- Main focus is reflected XSS.
+- Results should be manually validated in authorized scope.
+- When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
+

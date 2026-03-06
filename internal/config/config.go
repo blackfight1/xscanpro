@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -81,6 +82,7 @@ func Parse() Config {
 	subsFile := flag.String("i", "", "subdomain URL list file for katana/crawlergo")
 	outDir := flag.String("out", "", "output directory")
 	mode := flag.String("mode", "", "scan profile: fast | balanced | deep")
+	waymore := flag.String("waymore", "", "override collector.use_waymore (true/false)")
 	verbose := flag.Bool("v", false, "verbose output")
 
 	flag.Parse()
@@ -92,7 +94,7 @@ func Parse() Config {
 			seen[f.Name] = true
 		})
 		return seen
-	}(), domain, subsFile, outDir, mode, verbose)
+	}(), domain, subsFile, outDir, mode, waymore, verbose)
 
 	applyModeDefaults(&cfg)
 
@@ -203,6 +205,7 @@ func applyCLIOverrides(
 	cfg *Config,
 	seen map[string]bool,
 	domain, subsFile, outDir, mode *string,
+	waymore *string,
 	verbose *bool,
 ) {
 	if seen["domain"] {
@@ -216,6 +219,14 @@ func applyCLIOverrides(
 	}
 	if seen["mode"] {
 		cfg.Mode = strings.TrimSpace(*mode)
+	}
+	if seen["waymore"] {
+		v, err := strconv.ParseBool(strings.TrimSpace(*waymore))
+		if err != nil {
+			fmt.Println("invalid -waymore value, use true/false")
+			os.Exit(1)
+		}
+		cfg.Collector.UseWaymore = v
 	}
 	if seen["v"] {
 		cfg.Verbose = *verbose

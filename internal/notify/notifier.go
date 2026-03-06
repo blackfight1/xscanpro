@@ -88,6 +88,28 @@ func (n *Notifier) EnqueueFinding(f model.Finding) {
 	}
 }
 
+func (n *Notifier) NotifySummary(domain string, totalTargets, totalFindings int, elapsed time.Duration, outDir string) {
+	if !n.enabled {
+		return
+	}
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		domain = "unknown"
+	}
+	title := fmt.Sprintf("[XSS] Scan Finished %s", domain)
+	content := fmt.Sprintf(
+		"### %s\n- Domain: `%s`\n- Targets: `%d`\n- Findings: `%d`\n- Elapsed: `%s`\n- Output: `%s`\n",
+		title,
+		domain,
+		totalTargets,
+		totalFindings,
+		elapsed.Round(time.Millisecond),
+		strings.TrimSpace(outDir),
+	)
+	if err := n.postMarkdown(title, content); err != nil && n.verbose {
+		fmt.Printf("  ! notify warning:  %v\n", err)
+	}
+}
 func (n *Notifier) Close() {
 	if !n.enabled {
 		return
@@ -133,9 +155,8 @@ func (n *Notifier) reserveSend(host string, f model.Finding) bool {
 	if param == "" {
 		param = "{empty}"
 	}
-	path := pathOf(f.URL)
-	ctx := strings.ToLower(strings.TrimSpace(f.Context))
-	uniq := host + "|" + path + "|" + param + "|" + ctx
+
+	uniq := host + "|" + param
 	if _, exists := n.sentKeySet[uniq]; exists {
 		return false
 	}
@@ -156,13 +177,26 @@ func (n *Notifier) releaseSend(host string, f model.Finding) {
 	if param == "" {
 		param = "{empty}"
 	}
-	path := pathOf(f.URL)
-	ctx := strings.ToLower(strings.TrimSpace(f.Context))
-	uniq := host + "|" + path + "|" + param + "|" + ctx
+
+	uniq := host + "|" + param
 	delete(n.sentKeySet, uniq)
 }
 
 func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
+	title := fmt.Sprintf("[XSS] %s", host)
+	content := fmt.Sprintf(
+		"### %s\n- URL: `%s`\n- Param: `%s`\n- Payload: `%s`\n- Context: `%s`\n- Evidence: %s\n",
+		title,
+		strings.TrimSpace(f.URL),
+		f.Param,
+		trimText(f.InjectedValue, 500),
+		f.Context,
+		trimText(f.Indicator, 500),
+	)
+	return n.postMarkdown(title, content)
+}
+
+func (n *Notifier) postMarkdown(title, content string) error {
 	webhook := strings.TrimSpace(n.cfg.DingTalk.Webhook)
 	if webhook == "" {
 		return fmt.Errorf("dingtalk webhook is empty")
@@ -177,17 +211,6 @@ func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
 		}
 		finalURL = fmt.Sprintf("%s%stimestamp=%d&sign=%s", webhook, sep, ts, url.QueryEscape(sign))
 	}
-
-	title := fmt.Sprintf("[XSS] %s", host)
-	content := fmt.Sprintf(
-		"### %s\n- URL: `%s`\n- Param: `%s`\n- Payload: `%s`\n- Context: `%s`\n- Evidence: %s\n",
-		title,
-		strings.TrimSpace(f.URL),
-		f.Param,
-		trimText(f.InjectedValue, 500),
-		f.Context,
-		trimText(f.Indicator, 500),
-	)
 	payload := map[string]interface{}{
 		"msgtype": "markdown",
 		"markdown": map[string]string{
@@ -201,7 +224,6 @@ func (n *Notifier) sendDingTalk(f model.Finding, host string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := n.client.Do(req)
 	if err != nil {
 		return err

@@ -47,6 +47,7 @@ notify:
 
 collector:
   # Enable waymore collector.
+  # Can be overridden by CLI: -waymore=true/false
   use_waymore: true
 
   # Enable katana collector.

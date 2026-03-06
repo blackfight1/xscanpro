@@ -205,5 +205,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	notifier.NotifySummary(cfg.Domain, len(targets), report.TotalFindings, time.Since(start), cfg.OutDir)
+
 	printSummary(cfg, len(targets), report, start)
 }

@@ -65,6 +65,7 @@ go build -o .\dist\xscanpro-linux-amd64 .\cmd\scanner
 -i subs.txt           # subdomain URL list file for katana/crawlergo
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
+-waymore false        # override collector.use_waymore (true/false)
 -v                    # verbose logs
 ```
 
@@ -107,6 +108,8 @@ Common keys:
 Notification behavior:
 
 - Notifications are sent when findings are produced during scan.
+- Dedup key for finding notifications is per-site + param, so same param with different payloads will not keep spamming.
+- A final scan summary notification is sent at the end of the run.
 - To avoid flooding, each site (hostname) sends at most `notify.max_per_site` messages in one run.
 - Severity grading is not used in notification or reporting.
 

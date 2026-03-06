@@ -214,11 +214,6 @@ func (s *Scanner) Scan(targets []model.ScanTarget) model.Report {
 	}
 
 	findings = dedupeFindings(findings)
-	if s.onFinding != nil {
-		for _, f := range findings {
-			s.onFinding(f)
-		}
-	}
 
 	if s.verbose {
 		skipped := totalGrouped - scanned
@@ -446,6 +441,9 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 			}
 			seen[key] = struct{}{}
 			findings = append(findings, f)
+			if s.onFinding != nil {
+				s.onFinding(f)
+			}
 			hitGroups[fr.groupKey] = true
 		}
 	}()

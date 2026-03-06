@@ -149,11 +149,9 @@ func defaultConfig() Config {
 			CrawlergoTimeout: 1200,
 		},
 		Target: TargetConfig{
-			SmartDedupe:   true,
-			ParamStrategy: "batch",
-			HighValueGlobalParams: []string{
-				"q", "query", "search", "keyword", "url", "redirect", "return", "next", "callback",
-			},
+			SmartDedupe:           true,
+			ParamStrategy:         "batch",
+			HighValueGlobalParams: []string{"q", "query", "search", "keyword", "kw", "term", "s", "id", "item", "pid", "cat", "page", "lang", "sort", "filter", "file", "path", "url", "redirect", "return"},
 		},
 		Scanner: ScannerConfig{
 			AllParams:          true,
@@ -375,7 +373,7 @@ func applyModeDefaults(cfg *Config) {
 		cfg.Target.ParamStrategy = "batch"
 	}
 	if len(cfg.Target.HighValueGlobalParams) == 0 {
-		cfg.Target.HighValueGlobalParams = []string{"q", "query", "search", "keyword", "url", "redirect", "return", "next", "callback"}
+		cfg.Target.HighValueGlobalParams = []string{"q", "query", "search", "keyword", "kw", "term", "s", "id", "item", "pid", "cat", "page", "lang", "sort", "filter", "file", "path", "url", "redirect", "return"}
 	}
 	if cfg.Notify.MaxPerSite <= 0 {
 		cfg.Notify.MaxPerSite = 10

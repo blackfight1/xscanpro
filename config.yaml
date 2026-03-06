@@ -105,12 +105,22 @@ target:
     - query
     - search
     - keyword
+    - kw
+    - term
+    - s
+    - id
+    - item
+    - pid
+    - cat
+    - page
+    - lang
+    - sort
+    - filter
+    - file
+    - path
     - url
     - redirect
     - return
-    - next
-    - callback
-
 scanner:
   # JS fetching/extraction worker count.
   # 0 means use mode default.

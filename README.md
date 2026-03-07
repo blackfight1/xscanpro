@@ -62,7 +62,7 @@ go build -o .\dist\xscanpro-linux-amd64 .\cmd\scanner
 
 ```powershell
 -config config.yaml   # config file path
--domain example.com   # root domain for waymore -i
+-domain example.com   # root domain for waymore (required only when waymore enabled)
 -i subs.txt           # subdomain URL list file for katana/crawlergo
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
@@ -80,6 +80,7 @@ Notes:
 Edit `config.yaml` (fully commented).
 Common keys:
 
+- `domain` (required only when `collector.use_waymore=true`)
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_crawlergo`
@@ -171,3 +172,4 @@ Artifacts:
 - When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
 - `balanced`/`fast` are intended to use `batch` parameter strategy by default.
 - `deep` mode is intended to use `deep` parameter strategy by default.
+

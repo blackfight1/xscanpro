@@ -185,3 +185,4 @@ scanner:
   # Max samples kept per value-shape fingerprint before skipping.
   # Lower = faster, Higher = more coverage.
   shape_threshold: 15
+

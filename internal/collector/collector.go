@@ -61,7 +61,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 		return out, err
 	}
 	root := normalizeRootDomain(domain)
-	if root == "" {
+	if opt.UseWaymore && root == "" {
 		return out, fmt.Errorf("invalid -domain: %s", domain)
 	}
 	if !opt.UseWaymore && !opt.UseKatana && !opt.UseCrawlergo {

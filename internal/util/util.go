@@ -93,7 +93,13 @@ func CanonicalURL(raw string) (string, error) {
 }
 
 func ScopeMatch(host, domain string) bool {
-	host = strings.ToLower(host)
-	domain = strings.ToLower(domain)
+	host = strings.ToLower(strings.TrimSpace(host))
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if host == "" {
+		return false
+	}
+	if domain == "" {
+		return true
+	}
 	return host == domain || strings.HasSuffix(host, "."+domain)
 }

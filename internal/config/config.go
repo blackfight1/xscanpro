@@ -102,8 +102,8 @@ func Parse() Config {
 
 	applyModeDefaults(&cfg)
 
-	if strings.TrimSpace(cfg.Domain) == "" {
-		fmt.Println("missing -domain")
+	if cfg.Collector.UseWaymore && strings.TrimSpace(cfg.Domain) == "" {
+		fmt.Println("missing -domain / domain (required when waymore is enabled)")
 		flag.Usage()
 		os.Exit(1)
 	}

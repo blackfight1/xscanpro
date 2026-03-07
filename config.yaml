@@ -1,7 +1,8 @@
 # Root domain for waymore.
 # Example: vulnweb.com
-# Required.
-domain: vulnweb.com
+# Required only when collector.use_waymore=true.
+# Leave empty when waymore is disabled.
+domain: ""
 
 # Subdomain URL list file for katana/crawlergo input.
 # Required when collector.use_katana=true or collector.use_crawlergo=true.

@@ -49,6 +49,7 @@ func printHeader(cfg config.Config) {
 	fmt.Printf("  collector:      waymore=%t, katana=%t, crawlergo=%t\n", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
 	fmt.Printf("  workers:        js=%d, scan=%d\n", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
 	fmt.Printf("  post scan:      enabled=%t, batch=%d\n", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
+	fmt.Printf("  scan batch:     enabled=%t, size=%d\n", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
 	fmt.Printf("  notify:         dingtalk=%t\n", cfg.Notify.Enabled)
 	fmt.Println()
 }
@@ -84,6 +85,26 @@ func trimForConsole(s string, max int) string {
 	return s[:max] + "...(truncated)"
 }
 
+func chunkScanTargets(targets []model.ScanTarget, enabled bool, size int) [][]model.ScanTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	if !enabled {
+		return [][]model.ScanTarget{targets}
+	}
+	if size <= 0 {
+		size = len(targets)
+	}
+	out := make([][]model.ScanTarget, 0, (len(targets)+size-1)/size)
+	for i := 0; i < len(targets); i += size {
+		end := i + size
+		if end > len(targets) {
+			end = len(targets)
+		}
+		out = append(out, targets[i:end])
+	}
+	return out
+}
 func printFinding(f model.Finding) {
 	method := strings.ToUpper(strings.TrimSpace(f.Method))
 	if method == "" {
@@ -129,12 +150,15 @@ func main() {
 	totalStages := 4
 
 	s1 := stageStart(1, totalStages, "Collector")
-	stageInfo("sources", "waymore + katana parallel, crawlergo serial")
+	stageInfo("sources", "waymore + katana + crawlergo")
+	stageInfo("subs batch", fmt.Sprintf("enabled=%t,size=%d", cfg.Collector.InputBatchEnabled, cfg.Collector.InputBatchSize))
 	stageInfo("scope", cfg.Domain)
 	crawled, err := collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
 		UseWaymore:        cfg.Collector.UseWaymore,
 		UseKatana:         cfg.Collector.UseKatana,
 		UseCrawlergo:      cfg.Collector.UseCrawlergo,
+		InputBatchEnabled: cfg.Collector.InputBatchEnabled,
+		InputBatchSize:    cfg.Collector.InputBatchSize,
 		KatanaConcurrency: cfg.Collector.KatanaConcurrency,
 		KatanaDepth:       cfg.Collector.KatanaDepth,
 		CrawlergoBin:      cfg.Collector.CrawlergoBin,
@@ -187,6 +211,7 @@ func main() {
 	stageInfo("max params/url", cfg.Scanner.MaxParamsPerURL)
 	stageInfo("post scan", cfg.Scanner.EnablePostScan)
 	stageInfo("post batch", cfg.Scanner.PostParamBatchSize)
+	stageInfo("scan batch", fmt.Sprintf("enabled=%t,size=%d", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize))
 	scan := scanner.New(client, cfg.Scanner.ScanWorkers, cfg.Scanner.MaxParamsPerURL, cfg.Verbose)
 	scan.SetTemplateStrategy(cfg.Scanner.SamplePerGroup, cfg.Scanner.ExpandOnHit)
 	scan.SetBatchStrategy(cfg.Scanner.AllParams, cfg.Scanner.ParamBatchSize)
@@ -198,7 +223,18 @@ func main() {
 		printFinding(f)
 		notifier.EnqueueFinding(f)
 	})
-	report := scan.Scan(targets)
+	scanBatches := chunkScanTargets(targets, cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
+	allFindings := make([]model.Finding, 0)
+	for i, batch := range scanBatches {
+		stageInfo("scan chunk", fmt.Sprintf("%d/%d targets=%d", i+1, len(scanBatches), len(batch)))
+		part := scan.Scan(batch)
+		allFindings = append(allFindings, part.Findings...)
+	}
+	report := model.Report{
+		TotalTargets:  len(targets),
+		TotalFindings: len(allFindings),
+		Findings:      allFindings,
+	}
 	stageInfo("findings", report.TotalFindings)
 	stageDone(s4, "scan completed")
 

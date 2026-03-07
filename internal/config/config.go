@@ -28,6 +28,8 @@ type CollectorConfig struct {
 	UseWaymore        bool   `yaml:"use_waymore"`
 	UseKatana         bool   `yaml:"use_katana"`
 	UseCrawlergo      bool   `yaml:"use_crawlergo"`
+	InputBatchEnabled bool   `yaml:"input_batch_enabled"`
+	InputBatchSize    int    `yaml:"input_batch_size"`
 	KatanaConcurrency int    `yaml:"katana_concurrency"`
 	KatanaDepth       int    `yaml:"katana_depth"`
 	CrawlergoBin      string `yaml:"crawlergo_bin"`
@@ -54,6 +56,8 @@ type ScannerConfig struct {
 	MaxParamsPerURL      int  `yaml:"max_params_per_url"`
 	AllParams            bool `yaml:"all_params"`
 	ParamBatchSize       int  `yaml:"param_batch_size"`
+	ScanBatchEnabled     bool `yaml:"scan_batch_enabled"`
+	ScanBatchSize        int  `yaml:"scan_batch_size"`
 	EnablePostScan       bool `yaml:"enable_post_scan"`
 	PostParamBatchSize   int  `yaml:"post_param_batch_size"`
 	MaxPostFormsPerURL   int  `yaml:"max_post_forms_per_url"`
@@ -143,14 +147,16 @@ func defaultConfig() Config {
 		OutDir: "output",
 		Mode:   "balanced",
 		Collector: CollectorConfig{
-			UseWaymore:       true,
-			UseKatana:        true,
-			UseCrawlergo:     true,
-			CrawlergoBin:     "crawlergo",
-			CrawlergoChrome:  "/usr/bin/google-chrome",
-			CrawlergoTabs:    10,
-			CrawlergoRobots:  true,
-			CrawlergoTimeout: 1200,
+			UseWaymore:        true,
+			UseKatana:         true,
+			UseCrawlergo:      true,
+			InputBatchEnabled: true,
+			InputBatchSize:    200,
+			CrawlergoBin:      "crawlergo",
+			CrawlergoChrome:   "/usr/bin/google-chrome",
+			CrawlergoTabs:     10,
+			CrawlergoRobots:   true,
+			CrawlergoTimeout:  1200,
 		},
 		Target: TargetConfig{
 			SmartDedupe:           true,
@@ -160,6 +166,8 @@ func defaultConfig() Config {
 		Scanner: ScannerConfig{
 			AllParams:            true,
 			ParamBatchSize:       45,
+			ScanBatchEnabled:     true,
+			ScanBatchSize:        2000,
 			EnablePostScan:       true,
 			PostParamBatchSize:   80,
 			MaxPostFormsPerURL:   8,
@@ -274,6 +282,9 @@ func applyModeDefaults(cfg *Config) {
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
 		}
+		if cfg.Scanner.ScanBatchSize <= 0 {
+			cfg.Scanner.ScanBatchSize = 1000
+		}
 		if cfg.Scanner.PostParamBatchSize <= 0 {
 			cfg.Scanner.PostParamBatchSize = 80
 		}
@@ -322,6 +333,9 @@ func applyModeDefaults(cfg *Config) {
 		}
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
+		}
+		if cfg.Scanner.ScanBatchSize <= 0 {
+			cfg.Scanner.ScanBatchSize = 1000
 		}
 		if cfg.Scanner.PostParamBatchSize <= 0 {
 			cfg.Scanner.PostParamBatchSize = 100
@@ -373,6 +387,9 @@ func applyModeDefaults(cfg *Config) {
 		if cfg.Scanner.ParamBatchSize <= 0 {
 			cfg.Scanner.ParamBatchSize = 45
 		}
+		if cfg.Scanner.ScanBatchSize <= 0 {
+			cfg.Scanner.ScanBatchSize = 1000
+		}
 		if cfg.Scanner.PostParamBatchSize <= 0 {
 			cfg.Scanner.PostParamBatchSize = 80
 		}
@@ -403,6 +420,12 @@ func applyModeDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.Collector.CrawlergoBin) == "" {
 		cfg.Collector.CrawlergoBin = "crawlergo"
+	}
+	if cfg.Collector.InputBatchSize <= 0 {
+		cfg.Collector.InputBatchSize = 200
+	}
+	if cfg.Scanner.ScanBatchSize <= 0 {
+		cfg.Scanner.ScanBatchSize = 2000
 	}
 	if strings.TrimSpace(cfg.Target.ParamStrategy) == "" {
 		cfg.Target.ParamStrategy = "batch"

@@ -84,6 +84,8 @@ Common keys:
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_crawlergo`
+- `collector.input_batch_enabled`
+- `collector.input_batch_size`
 - `collector.crawlergo_bin`
 - `collector.crawlergo_chrome_path`
 - `collector.crawlergo_tabs`
@@ -95,6 +97,8 @@ Common keys:
 - `batch` mode also keeps scan-stage hidden params and verify probes more conservative.
 - `scanner.all_params`
 - `scanner.param_batch_size`
+- `scanner.scan_batch_enabled`
+- `scanner.scan_batch_size`
 - `scanner.enable_post_scan`
 - `scanner.post_param_batch_size`
 - `scanner.max_post_forms_per_url`
@@ -153,6 +157,7 @@ Artifacts:
 4. Scan
    - template sample phase
    - GET batch quick probe
+   - scan targets can run in batches (memory-friendly)
    - optional POST form-urlencoded quick probe
    - `batch`: hidden params are filtered to high-value names and capped
    - `batch`: verify probes are reduced to representative contexts and stop on first hit
@@ -172,4 +177,7 @@ Artifacts:
 - When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
 - `balanced`/`fast` are intended to use `batch` parameter strategy by default.
 - `deep` mode is intended to use `deep` parameter strategy by default.
+
+
+
 

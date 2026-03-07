@@ -58,6 +58,13 @@ collector:
   # Execution order: waymore+katana (parallel) -> crawlergo (serial).
   use_crawlergo: true
 
+  # Split subdomain input file into batches for katana/crawlergo.
+  # Useful when input is huge and crawler process may be killed by memory pressure.
+  input_batch_enabled: true
+
+  # Subdomain URL count per batch when input batching is enabled.
+  input_batch_size: 200
+
   # Katana crawling concurrency.
   # 0 means use mode default.
   katana_concurrency: 16
@@ -156,6 +163,14 @@ scanner:
   # Example: 45 means probe 45 params in one request.
   param_batch_size: 45
 
+  # Split scan targets into batches to reduce peak memory during scanner stage.
+  # true = run scanner in chunks and merge all findings into one final report.
+  scan_batch_enabled: true
+
+  # Max target count per scan batch when scan batching is enabled.
+  # 0 means use mode default.
+  scan_batch_size: 2000
+
   # Enable POST reflected XSS scan for application/x-www-form-urlencoded forms.
   # true = parse HTML forms (method=post) and run POST quick/verify pipeline.
   enable_post_scan: true
@@ -186,4 +201,5 @@ scanner:
   # Max samples kept per value-shape fingerprint before skipping.
   # Lower = faster, Higher = more coverage.
   shape_threshold: 15
+
 

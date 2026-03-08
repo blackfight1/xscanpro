@@ -47,7 +47,7 @@ go run .\cmd\scanner\main.go -config .\config.yaml
 Linux amd64 executable:
 
 ```text
-dist/xscanpro-linux-amd64
+xscanpro
 ```
 
 Manual build example:
@@ -55,7 +55,13 @@ Manual build example:
 ```powershell
 $env:GOOS='linux'
 $env:GOARCH='amd64'
-go build -o .\dist\xscanpro-linux-amd64 .\cmd\scanner
+go build -o .\xscanpro .\cmd\scanner
+```
+
+Run on Linux:
+
+```bash
+./xscanpro -config config.yaml -i urls.txt
 ```
 
 ## Minimal CLI flags

@@ -25,18 +25,19 @@ type Config struct {
 }
 
 type CollectorConfig struct {
-	UseWaymore        bool   `yaml:"use_waymore"`
-	UseKatana         bool   `yaml:"use_katana"`
-	UseCrawlergo      bool   `yaml:"use_crawlergo"`
-	InputBatchEnabled bool   `yaml:"input_batch_enabled"`
-	InputBatchSize    int    `yaml:"input_batch_size"`
-	KatanaConcurrency int    `yaml:"katana_concurrency"`
-	KatanaDepth       int    `yaml:"katana_depth"`
-	CrawlergoBin      string `yaml:"crawlergo_bin"`
-	CrawlergoChrome   string `yaml:"crawlergo_chrome_path"`
-	CrawlergoTabs     int    `yaml:"crawlergo_tabs"`
-	CrawlergoRobots   bool   `yaml:"crawlergo_robots_path"`
-	CrawlergoTimeout  int    `yaml:"crawlergo_timeout_sec"`
+	UseWaymore                 bool   `yaml:"use_waymore"`
+	UseKatana                  bool   `yaml:"use_katana"`
+	UseCrawlergo               bool   `yaml:"use_crawlergo"`
+	KatanaConcurrency          int    `yaml:"katana_concurrency"`
+	KatanaDepth                int    `yaml:"katana_depth"`
+	CrawlergoBin               string `yaml:"crawlergo_bin"`
+	CrawlergoChrome            string `yaml:"crawlergo_chrome_path"`
+	CrawlergoTabs              int    `yaml:"crawlergo_tabs"`
+	CrawlergoRobots            bool   `yaml:"crawlergo_robots_path"`
+	CrawlergoTimeout           int    `yaml:"crawlergo_timeout_sec"`
+	CrawlergoBatchEnabled      bool   `yaml:"crawlergo_batch_enabled"`
+	CrawlergoBatchSize         int    `yaml:"crawlergo_batch_size"`
+	CrawlergoContinueOnTimeout bool   `yaml:"crawlergo_continue_on_timeout"`
 }
 
 type TargetConfig struct {
@@ -147,16 +148,17 @@ func defaultConfig() Config {
 		OutDir: "output",
 		Mode:   "balanced",
 		Collector: CollectorConfig{
-			UseWaymore:        true,
-			UseKatana:         true,
-			UseCrawlergo:      true,
-			InputBatchEnabled: true,
-			InputBatchSize:    200,
-			CrawlergoBin:      "crawlergo",
-			CrawlergoChrome:   "/usr/bin/google-chrome",
-			CrawlergoTabs:     10,
-			CrawlergoRobots:   true,
-			CrawlergoTimeout:  1200,
+			UseWaymore:                 true,
+			UseKatana:                  true,
+			UseCrawlergo:               true,
+			CrawlergoBin:               "crawlergo",
+			CrawlergoChrome:            "/usr/bin/google-chrome",
+			CrawlergoTabs:              10,
+			CrawlergoRobots:            true,
+			CrawlergoTimeout:           1200,
+			CrawlergoBatchEnabled:      true,
+			CrawlergoBatchSize:         50,
+			CrawlergoContinueOnTimeout: true,
 		},
 		Target: TargetConfig{
 			SmartDedupe:           true,
@@ -421,8 +423,8 @@ func applyModeDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Collector.CrawlergoBin) == "" {
 		cfg.Collector.CrawlergoBin = "crawlergo"
 	}
-	if cfg.Collector.InputBatchSize <= 0 {
-		cfg.Collector.InputBatchSize = 200
+	if cfg.Collector.CrawlergoBatchSize <= 0 {
+		cfg.Collector.CrawlergoBatchSize = 50
 	}
 	if cfg.Scanner.ScanBatchSize <= 0 {
 		cfg.Scanner.ScanBatchSize = 2000

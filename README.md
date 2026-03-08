@@ -18,6 +18,8 @@ It uses neutral markers and context-aware verification.
 - Collector scheduling strategy:
   - waymore + katana run in parallel
   - crawlergo runs after them (serial, lower peak memory pressure)
+  - crawlergo can run in batches (default 50 per batch)
+  - single crawlergo batch timeout can be skipped to continue next batch
 - JS endpoint and parameter extraction
 - Reflected XSS focused scanning
 - Optional DingTalk notification when findings are produced (with per-site cap)
@@ -90,13 +92,14 @@ Common keys:
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_crawlergo`
-- `collector.input_batch_enabled`
-- `collector.input_batch_size`
 - `collector.crawlergo_bin`
 - `collector.crawlergo_chrome_path`
 - `collector.crawlergo_tabs`
 - `collector.crawlergo_robots_path`
 - `collector.crawlergo_timeout_sec`
+- `collector.crawlergo_batch_enabled`
+- `collector.crawlergo_batch_size`
+- `collector.crawlergo_continue_on_timeout`
 - `target.smart_dedupe`
 - `target.param_strategy`
 - `target.high_value_global_params`
@@ -153,7 +156,8 @@ Artifacts:
 1. Collect URLs
    - waymore with root domain
    - katana with subdomain URL list file
-   - crawlergo with subdomain URL list file
+   - crawlergo with subdomain URL list file (batch mode supported)
+   - crawlergo single-batch timeout can continue next batch (if enabled)
    - merge and dedupe all collector outputs
 2. Extract endpoints and params from JS
 3. Build scan targets

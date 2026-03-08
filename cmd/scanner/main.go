@@ -169,22 +169,23 @@ func main() {
 	totalStages := 4
 
 	s1 := stageStart(1, totalStages, "Collector")
-	stageInfo("sources", "waymore + katana + crawlergo")
-	stageInfo("subs batch", fmt.Sprintf("enabled=%t,size=%d", cfg.Collector.InputBatchEnabled, cfg.Collector.InputBatchSize))
+	stageInfo("sources", "waymore + katana(full) + crawlergo(batch)")
+	stageInfo("crawlergo batch", fmt.Sprintf("enabled=%t,size=%d,continue_timeout=%t", cfg.Collector.CrawlergoBatchEnabled, cfg.Collector.CrawlergoBatchSize, cfg.Collector.CrawlergoContinueOnTimeout))
 	stageInfo("scope", cfg.Domain)
 	crawled, err := collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
-		UseWaymore:        cfg.Collector.UseWaymore,
-		UseKatana:         cfg.Collector.UseKatana,
-		UseCrawlergo:      cfg.Collector.UseCrawlergo,
-		InputBatchEnabled: cfg.Collector.InputBatchEnabled,
-		InputBatchSize:    cfg.Collector.InputBatchSize,
-		KatanaConcurrency: cfg.Collector.KatanaConcurrency,
-		KatanaDepth:       cfg.Collector.KatanaDepth,
-		CrawlergoBin:      cfg.Collector.CrawlergoBin,
-		CrawlergoChrome:   cfg.Collector.CrawlergoChrome,
-		CrawlergoTabs:     cfg.Collector.CrawlergoTabs,
-		CrawlergoRobots:   cfg.Collector.CrawlergoRobots,
-		CrawlergoTimeout:  cfg.Collector.CrawlergoTimeout,
+		UseWaymore:                 cfg.Collector.UseWaymore,
+		UseKatana:                  cfg.Collector.UseKatana,
+		UseCrawlergo:               cfg.Collector.UseCrawlergo,
+		KatanaConcurrency:          cfg.Collector.KatanaConcurrency,
+		KatanaDepth:                cfg.Collector.KatanaDepth,
+		CrawlergoBin:               cfg.Collector.CrawlergoBin,
+		CrawlergoChrome:            cfg.Collector.CrawlergoChrome,
+		CrawlergoTabs:              cfg.Collector.CrawlergoTabs,
+		CrawlergoRobots:            cfg.Collector.CrawlergoRobots,
+		CrawlergoTimeout:           cfg.Collector.CrawlergoTimeout,
+		CrawlergoBatchEnabled:      cfg.Collector.CrawlergoBatchEnabled,
+		CrawlergoBatchSize:         cfg.Collector.CrawlergoBatchSize,
+		CrawlergoContinueOnTimeout: cfg.Collector.CrawlergoContinueOnTimeout,
 	})
 	if err != nil {
 		stageError(fmt.Sprintf("collection failed: %v", err))

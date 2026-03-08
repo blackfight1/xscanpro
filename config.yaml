@@ -58,13 +58,6 @@ collector:
   # Execution order: waymore+katana (parallel) -> crawlergo (serial).
   use_crawlergo: true
 
-  # Split subdomain input file into batches for katana/crawlergo.
-  # Useful when input is huge and crawler process may be killed by memory pressure.
-  input_batch_enabled: true
-
-  # Subdomain URL count per batch when input batching is enabled.
-  input_batch_size: 200
-
   # Katana crawling concurrency.
   # 0 means use mode default.
   katana_concurrency: 16
@@ -89,6 +82,17 @@ collector:
   # Crawlergo timeout in seconds.
   # 0 means use mode default.
   crawlergo_timeout_sec: 1200
+
+  # Enable crawlergo input batching only.
+  # waymore + katana always run on full input first.
+  crawlergo_batch_enabled: true
+
+  # URL count per crawlergo batch.
+  # Recommended 50 for large-scope stability.
+  crawlergo_batch_size: 50
+
+  # If one crawlergo batch times out, skip it and continue next batch.
+  crawlergo_continue_on_timeout: true
 
 target:
   # Enable target smart dedupe.

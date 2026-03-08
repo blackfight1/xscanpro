@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"xscanpro/internal/model"
@@ -19,9 +20,8 @@ import (
 )
 
 const (
-	waymoreOut   = "tmp_waymore_urls.txt"
-	katanaOut    = "tmp_katana_urls.txt"
-	crawlergoOut = "tmp_crawlergo_urls.txt"
+	waymoreOut = "tmp_waymore_urls.txt"
+	katanaOut  = "tmp_katana_urls.txt"
 )
 
 var jsRe = regexp.MustCompile(`(?i)\.m?js(?:\?|$)`)
@@ -42,18 +42,19 @@ var staticExtSet = func() map[string]struct{} {
 }()
 
 type Options struct {
-	UseWaymore        bool
-	UseKatana         bool
-	UseCrawlergo      bool
-	InputBatchEnabled bool
-	InputBatchSize    int
-	KatanaConcurrency int
-	KatanaDepth       int
-	CrawlergoBin      string
-	CrawlergoChrome   string
-	CrawlergoTabs     int
-	CrawlergoRobots   bool
-	CrawlergoTimeout  int
+	UseWaymore                 bool
+	UseKatana                  bool
+	UseCrawlergo               bool
+	KatanaConcurrency          int
+	KatanaDepth                int
+	CrawlergoBin               string
+	CrawlergoChrome            string
+	CrawlergoTabs              int
+	CrawlergoRobots            bool
+	CrawlergoTimeout           int
+	CrawlergoBatchEnabled      bool
+	CrawlergoBatchSize         int
+	CrawlergoContinueOnTimeout bool
 }
 
 func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, error) {
@@ -99,11 +100,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			opt.CrawlergoTimeout = 1200
 		}
 	}
-	if opt.InputBatchSize <= 0 {
-		opt.InputBatchSize = 200
-	}
-
-	var batchSubs [][]string
+	var subsLines []string
 	if opt.UseKatana || opt.UseCrawlergo {
 		if _, err := os.Stat(subsFile); err != nil {
 			return out, fmt.Errorf("invalid -i file: %w", err)
@@ -115,59 +112,83 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 		if len(lines) == 0 {
 			return out, fmt.Errorf("-i file is empty")
 		}
-		lines = util.UniqueStrings(lines)
-		sort.Strings(lines)
-		if opt.InputBatchEnabled && len(lines) > opt.InputBatchSize {
-			batchSubs = chunkLines(lines, opt.InputBatchSize)
-		} else {
-			batchSubs = [][]string{lines}
-		}
+		subsLines = util.UniqueStrings(lines)
+		sort.Strings(subsLines)
+	}
+	if opt.CrawlergoBatchSize <= 0 {
+		opt.CrawlergoBatchSize = 50
 	}
 
 	ctx := context.Background()
-	if opt.UseWaymore {
-		if err := run(ctx, outDir, "waymore",
-			"-i", root,
-			"-mode", "U",
-			"-nlf",
-			"-fc", "404",
-			"-oU", waymoreOut,
-		); err != nil {
-			return out, fmt.Errorf("waymore failed: %w", err)
+	katOut := filepath.Join(outDir, katanaOut)
+	defer safeRemove(katOut)
+	files := make([]string, 0, 3)
+	if opt.UseWaymore || opt.UseKatana {
+		var wg sync.WaitGroup
+		errCh := make(chan error, 2)
+
+		if opt.UseWaymore {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := run(ctx, outDir, "waymore",
+					"-i", root,
+					"-mode", "U",
+					"-nlf",
+					"-fc", "404",
+					"-oU", waymoreOut,
+				); err != nil {
+					errCh <- fmt.Errorf("waymore failed: %w", err)
+				}
+			}()
+		}
+		if opt.UseKatana {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				absSubs, _ := filepath.Abs(subsFile)
+				if err := run(ctx, outDir, "katana",
+					"-list", absSubs,
+					"-jc",
+					"-kf", "all",
+					"-d", fmt.Sprintf("%d", opt.KatanaDepth),
+					"-c", fmt.Sprintf("%d", opt.KatanaConcurrency),
+					"-ef", strings.Join(staticExclude, ","),
+					"-o", filepath.Base(katOut),
+				); err != nil {
+					errCh <- fmt.Errorf("katana failed: %w", err)
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			if err != nil {
+				return out, err
+			}
 		}
 	}
-
-	files := make([]string, 0, 1+len(batchSubs)*2)
 	if opt.UseWaymore {
 		files = append(files, waymoreTmpPath)
 	}
-	for i, lines := range batchSubs {
-		idx := i + 1
-		subsPath := filepath.Join(outDir, fmt.Sprintf("tmp_subs_batch_%03d.txt", idx))
-		if err := util.WriteLines(subsPath, lines); err != nil {
-			return out, fmt.Errorf("write subs batch %d: %w", idx, err)
-		}
-		defer safeRemove(subsPath)
+	if opt.UseKatana {
+		files = append(files, katOut)
+	}
 
-		if opt.UseKatana {
-			katOut := filepath.Join(outDir, fmt.Sprintf("tmp_katana_urls_%03d.txt", idx))
-			defer safeRemove(katOut)
-			absSubs, _ := filepath.Abs(subsPath)
-			if err := run(ctx, outDir, "katana",
-				"-list", absSubs,
-				"-jc",
-				"-kf", "all",
-				"-d", fmt.Sprintf("%d", opt.KatanaDepth),
-				"-c", fmt.Sprintf("%d", opt.KatanaConcurrency),
-				"-ef", strings.Join(staticExclude, ","),
-				"-o", filepath.Base(katOut),
-			); err != nil {
-				return out, fmt.Errorf("katana failed (batch %d/%d): %w", idx, len(batchSubs), err)
+	if opt.UseCrawlergo {
+		crawlergoBatches := [][]string{subsLines}
+		if opt.CrawlergoBatchEnabled && len(subsLines) > opt.CrawlergoBatchSize {
+			crawlergoBatches = chunkLines(subsLines, opt.CrawlergoBatchSize)
+		}
+		for i, lines := range crawlergoBatches {
+			idx := i + 1
+			subsPath := filepath.Join(outDir, fmt.Sprintf("tmp_crawlergo_subs_%03d.txt", idx))
+			if err := util.WriteLines(subsPath, lines); err != nil {
+				return out, fmt.Errorf("write crawlergo subs batch %d: %w", idx, err)
 			}
-			files = append(files, katOut)
-		}
+			defer safeRemove(subsPath)
 
-		if opt.UseCrawlergo {
 			cgOut := filepath.Join(outDir, fmt.Sprintf("tmp_crawlergo_urls_%03d.txt", idx))
 			defer safeRemove(cgOut)
 			absSubs, _ := filepath.Abs(subsPath)
@@ -182,14 +203,18 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			if opt.CrawlergoRobots {
 				args = append(args, "--robots-path")
 			}
-			if err := run(ctxCrawlergo, outDir, opt.CrawlergoBin, args...); err != nil {
-				cancel()
-				if errors.Is(ctxCrawlergo.Err(), context.DeadlineExceeded) {
-					return out, fmt.Errorf("crawlergo timed out after %ds (batch %d/%d)", opt.CrawlergoTimeout, idx, len(batchSubs))
-				}
-				return out, fmt.Errorf("crawlergo failed (batch %d/%d): %w", idx, len(batchSubs), err)
-			}
+			err := run(ctxCrawlergo, outDir, opt.CrawlergoBin, args...)
 			cancel()
+			if err != nil {
+				if errors.Is(ctxCrawlergo.Err(), context.DeadlineExceeded) && opt.CrawlergoContinueOnTimeout {
+					fmt.Printf("[collector] crawlergo batch %d/%d timed out after %ds, continue next batch\n", idx, len(crawlergoBatches), opt.CrawlergoTimeout)
+					continue
+				}
+				if errors.Is(ctxCrawlergo.Err(), context.DeadlineExceeded) {
+					return out, fmt.Errorf("crawlergo timed out after %ds (batch %d/%d)", opt.CrawlergoTimeout, idx, len(crawlergoBatches))
+				}
+				return out, fmt.Errorf("crawlergo failed (batch %d/%d): %w", idx, len(crawlergoBatches), err)
+			}
 			files = append(files, cgOut)
 		}
 	}

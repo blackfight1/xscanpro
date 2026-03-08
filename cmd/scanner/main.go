@@ -28,53 +28,67 @@ const logo = `
 `
 
 const (
-	colorBlue   = "\033[1;34m%s\033[0m"
-	colorCyan   = "\033[1;36m%s\033[0m"
-	colorGreen  = "\033[1;32m%s\033[0m"
-	colorYellow = "\033[1;33m%s\033[0m"
-	colorRed    = "\033[1;31m%s\033[0m"
+	clrReset  = "\033[0m"
+	clrBold   = "\033[1m"
+	clrBlue   = "\033[1;34m"
+	clrCyan   = "\033[1;36m"
+	clrGreen  = "\033[1;32m"
+	clrYellow = "\033[1;33m"
+	clrRed    = "\033[1;31m"
+	clrGray   = "\033[90m"
 )
 
-func printColor(format, text string) {
-	fmt.Printf(format, text)
+func paint(color, s string) string {
+	return color + s + clrReset
+}
+
+func line(ch string, n int) string {
+	if n <= 0 {
+		n = 64
+	}
+	return strings.Repeat(ch, n)
 }
 
 func printHeader(cfg config.Config) {
-	printColor(colorBlue, logo)
-	printColor(colorBlue, "xscanpro\n")
-	fmt.Printf("  mode:           %s\n", cfg.Mode)
-	fmt.Printf("  domain:         %s\n", cfg.Domain)
-	fmt.Printf("  out:            %s\n", filepath.Clean(cfg.OutDir))
-	fmt.Printf("  param strategy: %s\n", cfg.Target.ParamStrategy)
-	fmt.Printf("  collector:      waymore=%t, katana=%t, crawlergo=%t\n", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
-	fmt.Printf("  workers:        js=%d, scan=%d\n", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
-	fmt.Printf("  post scan:      enabled=%t, batch=%d\n", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
-	fmt.Printf("  scan batch:     enabled=%t, size=%d\n", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
-	fmt.Printf("  notify:         dingtalk=%t\n", cfg.Notify.Enabled)
-	fmt.Println()
+	fmt.Println(paint(clrBlue, line("=", 72)))
+	fmt.Print(paint(clrBlue, logo))
+	fmt.Println(paint(clrBlue, line("=", 72)))
+	fmt.Println(paint(clrBold+clrCyan, " PROFILE"))
+	fmt.Printf("  %-18s %s\n", "mode", cfg.Mode)
+	fmt.Printf("  %-18s %s\n", "domain", cfg.Domain)
+	fmt.Printf("  %-18s %s\n", "out", filepath.Clean(cfg.OutDir))
+	fmt.Printf("  %-18s %s\n", "param strategy", cfg.Target.ParamStrategy)
+	fmt.Printf("  %-18s waymore=%t, katana=%t, crawlergo=%t\n", "collector", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
+	fmt.Printf("  %-18s js=%d, scan=%d\n", "workers", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
+	fmt.Printf("  %-18s enabled=%t, batch=%d\n", "post scan", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
+	fmt.Printf("  %-18s enabled=%t, size=%d\n", "scan batch", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
+	fmt.Printf("  %-18s dingtalk=%t\n", "notify", cfg.Notify.Enabled)
+	fmt.Println(paint(clrGray, line("-", 72)))
 }
 
 func stageStart(idx int, total int, name string) time.Time {
-	printColor(colorCyan, fmt.Sprintf("[%d/%d] %s\n", idx, total, name))
+	fmt.Println()
+	fmt.Println(paint(clrCyan, fmt.Sprintf("[%d/%d] >>> %s", idx, total, name)))
+	fmt.Println(paint(clrGray, line("-", 72)))
 	return time.Now()
 }
 
 func stageInfo(label string, value interface{}) {
-	fmt.Printf("  - %-16s %v\n", label+":", value)
+	fmt.Printf("  %s %-16s %v\n", paint(clrGray, "|"), label+":", value)
 }
 
 func stageWarn(msg string) {
-	printColor(colorYellow, fmt.Sprintf("  ! %s\n", msg))
+	fmt.Println(paint(clrYellow, "  [WARN] "+msg))
 }
 
 func stageError(msg string) {
-	printColor(colorRed, fmt.Sprintf("  x %s\n", msg))
+	fmt.Println(paint(clrRed, "  [ERR ] "+msg))
 }
 
 func stageDone(start time.Time, detail string) {
-	printColor(colorGreen, fmt.Sprintf("  ok %s\n", detail))
+	fmt.Println(paint(clrGreen, "  [OK  ] "+detail))
 	stageInfo("elapsed", time.Since(start).Round(time.Millisecond))
-	fmt.Println()
+	fmt.Println(paint(clrGray, line("-", 72)))
 }
 
 func trimForConsole(s string, max int) string {
@@ -105,27 +119,32 @@ func chunkScanTargets(targets []model.ScanTarget, enabled bool, size int) [][]mo
 	}
 	return out
 }
+
 func printFinding(f model.Finding) {
 	method := strings.ToUpper(strings.TrimSpace(f.Method))
 	if method == "" {
 		method = "GET"
 	}
-	printColor(colorRed, "[HIT] Reflected XSS\n")
+	fmt.Println(paint(clrRed, line("!", 72)))
+	fmt.Println(paint(clrRed+clrBold, "[HIT] Reflected XSS"))
 	stageInfo("method", method)
 	stageInfo("url", f.URL)
 	stageInfo("param", f.Param)
 	stageInfo("payload", trimForConsole(f.InjectedValue, 180))
 	stageInfo("context", f.Context)
 	stageInfo("evidence", trimForConsole(f.Indicator, 180))
-	fmt.Println()
+	fmt.Println(paint(clrRed, line("!", 72)))
 }
 
 func printSummary(cfg config.Config, targets int, report model.Report, start time.Time) {
-	printColor(colorGreen, "Summary\n")
+	fmt.Println()
+	fmt.Println(paint(clrGreen, line("=", 72)))
+	fmt.Println(paint(clrGreen+clrBold, " FINAL SUMMARY"))
 	stageInfo("output", filepath.Clean(cfg.OutDir))
 	stageInfo("targets", targets)
 	stageInfo("findings", report.TotalFindings)
 	stageInfo("elapsed", time.Since(start).Round(time.Millisecond))
+	fmt.Println(paint(clrGreen, line("=", 72)))
 }
 
 func main() {
@@ -223,6 +242,7 @@ func main() {
 		printFinding(f)
 		notifier.EnqueueFinding(f)
 	})
+
 	scanBatches := chunkScanTargets(targets, cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
 	allFindings := make([]model.Finding, 0)
 	for i, batch := range scanBatches {
@@ -251,6 +271,5 @@ func main() {
 	}
 
 	notifier.NotifySummary(cfg.Domain, len(targets), report.TotalFindings, time.Since(start), cfg.OutDir)
-
 	printSummary(cfg, len(targets), report, start)
 }

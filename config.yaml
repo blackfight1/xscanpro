@@ -5,8 +5,14 @@
 domain: ""
 
 # Subdomain URL list file for katana/crawlergo input.
-# Required when collector.use_katana=true or collector.use_crawlergo=true.
+# Required when collector.use_katana=true or collector.use_crawlergo=true,
+# and xss_only_file is empty.
 subs_file: subs.txt
+
+# XSS-only mode input URL file.
+# When set (or CLI -xss-only is used), collector stage is skipped,
+# and -domain/-i are not required.
+xss_only_file: ""
 
 # Output directory for all generated artifacts.
 out_dir: output

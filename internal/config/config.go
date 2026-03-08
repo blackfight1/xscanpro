@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Domain        string          `yaml:"domain"`
 	SubsFile      string          `yaml:"subs_file"`
+	XSSOnlyFile   string          `yaml:"xss_only_file"`
 	OutDir        string          `yaml:"out_dir"`
 	Mode          string          `yaml:"mode"`
 	ParamDictFile string          `yaml:"param_dict_file"`
@@ -89,6 +90,7 @@ func Parse() Config {
 	configPath := flag.String("config", "config.yaml", "yaml config file path")
 	domain := flag.String("domain", "", "root domain for waymore, e.g. example.com")
 	subsFile := flag.String("i", "", "subdomain URL list file for katana/crawlergo")
+	xssOnlyFile := flag.String("xss-only", "", "xss-only mode URL list file, skip collectors")
 	outDir := flag.String("out", "", "output directory")
 	mode := flag.String("mode", "", "scan profile: fast | balanced | deep")
 	waymore := flag.String("waymore", "", "override collector.use_waymore (true/false)")
@@ -103,27 +105,35 @@ func Parse() Config {
 			seen[f.Name] = true
 		})
 		return seen
-	}(), domain, subsFile, outDir, mode, waymore, verbose)
+	}(), domain, subsFile, xssOnlyFile, outDir, mode, waymore, verbose)
 
 	applyModeDefaults(&cfg)
 
-	if cfg.Collector.UseWaymore && strings.TrimSpace(cfg.Domain) == "" {
-		fmt.Println("missing -domain / domain (required when waymore is enabled)")
-		flag.Usage()
-		os.Exit(1)
-	}
-	if !cfg.Collector.UseWaymore && !cfg.Collector.UseKatana && !cfg.Collector.UseCrawlergo {
-		fmt.Println("collector.use_waymore, collector.use_katana and collector.use_crawlergo cannot all be false")
-		os.Exit(1)
-	}
-	if (cfg.Collector.UseKatana || cfg.Collector.UseCrawlergo) && strings.TrimSpace(cfg.SubsFile) == "" {
-		fmt.Println("missing -i / subs_file (required when katana or crawlergo is enabled)")
-		flag.Usage()
-		os.Exit(1)
-	}
-	if cfg.Collector.UseCrawlergo && strings.TrimSpace(cfg.Collector.CrawlergoChrome) == "" {
-		fmt.Println("missing collector.crawlergo_chrome_path (required when crawlergo is enabled)")
-		os.Exit(1)
+	xssOnlyEnabled := strings.TrimSpace(cfg.XSSOnlyFile) != ""
+	if xssOnlyEnabled {
+		if _, err := os.Stat(strings.TrimSpace(cfg.XSSOnlyFile)); err != nil {
+			fmt.Printf("invalid -xss-only / xss_only_file: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		if cfg.Collector.UseWaymore && strings.TrimSpace(cfg.Domain) == "" {
+			fmt.Println("missing -domain / domain (required when waymore is enabled)")
+			flag.Usage()
+			os.Exit(1)
+		}
+		if !cfg.Collector.UseWaymore && !cfg.Collector.UseKatana && !cfg.Collector.UseCrawlergo {
+			fmt.Println("collector.use_waymore, collector.use_katana and collector.use_crawlergo cannot all be false")
+			os.Exit(1)
+		}
+		if (cfg.Collector.UseKatana || cfg.Collector.UseCrawlergo) && strings.TrimSpace(cfg.SubsFile) == "" {
+			fmt.Println("missing -i / subs_file (required when katana or crawlergo is enabled)")
+			flag.Usage()
+			os.Exit(1)
+		}
+		if cfg.Collector.UseCrawlergo && strings.TrimSpace(cfg.Collector.CrawlergoChrome) == "" {
+			fmt.Println("missing collector.crawlergo_chrome_path (required when crawlergo is enabled)")
+			os.Exit(1)
+		}
 	}
 	if cfg.Notify.Enabled {
 		provider := strings.ToLower(strings.TrimSpace(cfg.Notify.Provider))
@@ -220,7 +230,7 @@ func loadConfigFile(configPath *string, cfg *Config) {
 func applyCLIOverrides(
 	cfg *Config,
 	seen map[string]bool,
-	domain, subsFile, outDir, mode *string,
+	domain, subsFile, xssOnlyFile, outDir, mode *string,
 	waymore *string,
 	verbose *bool,
 ) {
@@ -229,6 +239,9 @@ func applyCLIOverrides(
 	}
 	if seen["i"] {
 		cfg.SubsFile = strings.TrimSpace(*subsFile)
+	}
+	if seen["xss-only"] {
+		cfg.XSSOnlyFile = strings.TrimSpace(*xssOnlyFile)
 	}
 	if seen["out"] {
 		cfg.OutDir = strings.TrimSpace(*outDir)

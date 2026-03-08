@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +42,16 @@ const (
 	clrGray   = "\033[90m"
 )
 
+var (
+	jsURLRe      = regexp.MustCompile(`(?i)\.m?js(?:\?|$)`)
+	staticExtSet = map[string]struct{}{
+		".png": {}, ".jpg": {}, ".jpeg": {}, ".gif": {}, ".svg": {}, ".webp": {}, ".bmp": {}, ".ico": {},
+		".css": {}, ".woff": {}, ".woff2": {}, ".ttf": {}, ".eot": {}, ".otf": {},
+		".mp4": {}, ".mp3": {}, ".wav": {}, ".avi": {}, ".mov": {}, ".webm": {},
+		".pdf": {}, ".zip": {}, ".rar": {}, ".7z": {}, ".tar": {}, ".gz": {},
+	}
+)
+
 func paint(color, s string) string {
 	return color + s + clrReset
 }
@@ -58,6 +72,9 @@ func printHeader(cfg config.Config) {
 	fmt.Printf("  %-18s %s\n", "domain", cfg.Domain)
 	fmt.Printf("  %-18s %s\n", "out", filepath.Clean(cfg.OutDir))
 	fmt.Printf("  %-18s %s\n", "param strategy", cfg.Target.ParamStrategy)
+	if strings.TrimSpace(cfg.XSSOnlyFile) != "" {
+		fmt.Printf("  %-18s %s\n", "xss only", cfg.XSSOnlyFile)
+	}
 	fmt.Printf("  %-18s waymore=%t, katana=%t, crawlergo=%t\n", "collector", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
 	fmt.Printf("  %-18s js=%d, scan=%d\n", "workers", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
 	fmt.Printf("  %-18s enabled=%t, batch=%d\n", "post scan", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
@@ -120,6 +137,55 @@ func chunkScanTargets(targets []model.ScanTarget, enabled bool, size int) [][]mo
 	return out
 }
 
+func isStaticLikeURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(u.Path))
+	if ext == "" {
+		return false
+	}
+	_, ok := staticExtSet[ext]
+	return ok
+}
+
+func loadXSSOnlyInput(filePath string) (model.CrawlResult, error) {
+	var out model.CrawlResult
+	lines, err := util.ReadLines(filePath)
+	if err != nil {
+		return out, err
+	}
+	seen := make(map[string]struct{}, len(lines))
+	urls := make([]string, 0, len(lines))
+	for _, line := range lines {
+		canon, err := util.CanonicalURL(line)
+		if err != nil {
+			continue
+		}
+		if isStaticLikeURL(canon) {
+			continue
+		}
+		if _, ok := seen[canon]; ok {
+			continue
+		}
+		seen[canon] = struct{}{}
+		urls = append(urls, canon)
+	}
+	sort.Strings(urls)
+	js := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if jsURLRe.MatchString(u) {
+			js = append(js, u)
+		}
+	}
+	js = util.UniqueStrings(js)
+	sort.Strings(js)
+	out.URLs = urls
+	out.JSURLs = js
+	return out, nil
+}
+
 func printFinding(f model.Finding) {
 	method := strings.ToUpper(strings.TrimSpace(f.Method))
 	if method == "" {
@@ -150,6 +216,7 @@ func printSummary(cfg config.Config, targets int, report model.Report, start tim
 func main() {
 	cfg := config.Parse()
 	start := time.Now()
+	xssOnlyMode := strings.TrimSpace(cfg.XSSOnlyFile) != ""
 
 	printHeader(cfg)
 
@@ -168,32 +235,53 @@ func main() {
 
 	totalStages := 4
 
-	s1 := stageStart(1, totalStages, "Collector")
-	stageInfo("sources", "waymore + katana(full) + crawlergo(batch)")
-	stageInfo("crawlergo batch", fmt.Sprintf("enabled=%t,size=%d,continue_timeout=%t", cfg.Collector.CrawlergoBatchEnabled, cfg.Collector.CrawlergoBatchSize, cfg.Collector.CrawlergoContinueOnTimeout))
-	stageInfo("scope", cfg.Domain)
-	crawled, err := collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
-		UseWaymore:                 cfg.Collector.UseWaymore,
-		UseKatana:                  cfg.Collector.UseKatana,
-		UseCrawlergo:               cfg.Collector.UseCrawlergo,
-		KatanaConcurrency:          cfg.Collector.KatanaConcurrency,
-		KatanaDepth:                cfg.Collector.KatanaDepth,
-		CrawlergoBin:               cfg.Collector.CrawlergoBin,
-		CrawlergoChrome:            cfg.Collector.CrawlergoChrome,
-		CrawlergoTabs:              cfg.Collector.CrawlergoTabs,
-		CrawlergoRobots:            cfg.Collector.CrawlergoRobots,
-		CrawlergoTimeout:           cfg.Collector.CrawlergoTimeout,
-		CrawlergoBatchEnabled:      cfg.Collector.CrawlergoBatchEnabled,
-		CrawlergoBatchSize:         cfg.Collector.CrawlergoBatchSize,
-		CrawlergoContinueOnTimeout: cfg.Collector.CrawlergoContinueOnTimeout,
-	})
-	if err != nil {
-		stageError(fmt.Sprintf("collection failed: %v", err))
-		os.Exit(1)
+	var crawled model.CrawlResult
+	if xssOnlyMode {
+		s1 := stageStart(1, totalStages, "Input URLs (XSS Only)")
+		stageInfo("source file", cfg.XSSOnlyFile)
+		stageInfo("collector", "skipped")
+		var err error
+		crawled, err = loadXSSOnlyInput(cfg.XSSOnlyFile)
+		if err != nil {
+			stageError(fmt.Sprintf("load xss-only input failed: %v", err))
+			os.Exit(1)
+		}
+		if len(crawled.URLs) == 0 {
+			stageError("xss-only input has no valid URLs after normalization")
+			os.Exit(1)
+		}
+		stageInfo("urls", len(crawled.URLs))
+		stageInfo("js urls", len(crawled.JSURLs))
+		stageDone(s1, "input loaded")
+	} else {
+		s1 := stageStart(1, totalStages, "Collector")
+		stageInfo("sources", "waymore + katana(full) + crawlergo(batch)")
+		stageInfo("crawlergo batch", fmt.Sprintf("enabled=%t,size=%d,continue_timeout=%t", cfg.Collector.CrawlergoBatchEnabled, cfg.Collector.CrawlergoBatchSize, cfg.Collector.CrawlergoContinueOnTimeout))
+		stageInfo("scope", cfg.Domain)
+		var err error
+		crawled, err = collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
+			UseWaymore:                 cfg.Collector.UseWaymore,
+			UseKatana:                  cfg.Collector.UseKatana,
+			UseCrawlergo:               cfg.Collector.UseCrawlergo,
+			KatanaConcurrency:          cfg.Collector.KatanaConcurrency,
+			KatanaDepth:                cfg.Collector.KatanaDepth,
+			CrawlergoBin:               cfg.Collector.CrawlergoBin,
+			CrawlergoChrome:            cfg.Collector.CrawlergoChrome,
+			CrawlergoTabs:              cfg.Collector.CrawlergoTabs,
+			CrawlergoRobots:            cfg.Collector.CrawlergoRobots,
+			CrawlergoTimeout:           cfg.Collector.CrawlergoTimeout,
+			CrawlergoBatchEnabled:      cfg.Collector.CrawlergoBatchEnabled,
+			CrawlergoBatchSize:         cfg.Collector.CrawlergoBatchSize,
+			CrawlergoContinueOnTimeout: cfg.Collector.CrawlergoContinueOnTimeout,
+		})
+		if err != nil {
+			stageError(fmt.Sprintf("collection failed: %v", err))
+			os.Exit(1)
+		}
+		stageInfo("urls", len(crawled.URLs))
+		stageInfo("js urls", len(crawled.JSURLs))
+		stageDone(s1, "collection completed")
 	}
-	stageInfo("urls", len(crawled.URLs))
-	stageInfo("js urls", len(crawled.JSURLs))
-	stageDone(s1, "collection completed")
 
 	s2 := stageStart(2, totalStages, "JS Discovery")
 	stageInfo("js workers", cfg.Scanner.JSWorkers)
@@ -271,6 +359,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	notifier.NotifySummary(cfg.Domain, len(targets), report.TotalFindings, time.Since(start), cfg.OutDir)
+	summaryScope := cfg.Domain
+	if strings.TrimSpace(summaryScope) == "" && xssOnlyMode {
+		summaryScope = "xss-only"
+	}
+	notifier.NotifySummary(summaryScope, len(targets), report.TotalFindings, time.Since(start), cfg.OutDir)
 	printSummary(cfg, len(targets), report, start)
 }

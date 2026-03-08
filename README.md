@@ -72,6 +72,7 @@ Run on Linux:
 -config config.yaml   # config file path
 -domain example.com   # root domain for waymore (required only when waymore enabled)
 -i subs.txt           # subdomain URL list file for katana/crawlergo
+-xss-only urls.txt    # xss-only mode: skip collector, scan this URL file directly
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
 -waymore false        # override collector.use_waymore (true/false)
@@ -89,6 +90,7 @@ Edit `config.yaml` (fully commented).
 Common keys:
 
 - `domain` (required only when `collector.use_waymore=true`)
+- `xss_only_file` (set this to enable xss-only mode and skip collector)
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_crawlergo`
@@ -153,12 +155,16 @@ Artifacts:
 
 ## Current scan flow
 
-1. Collect URLs
-   - waymore with root domain
-   - katana with subdomain URL list file
-   - crawlergo with subdomain URL list file (batch mode supported)
-   - crawlergo single-batch timeout can continue next batch (if enabled)
-   - merge and dedupe all collector outputs
+1. Collect URLs (full mode) or load URLs (xss-only mode)
+   - full mode:
+     - waymore with root domain
+     - katana with subdomain URL list file
+     - crawlergo with subdomain URL list file (batch mode supported)
+     - crawlergo single-batch timeout can continue next batch (if enabled)
+     - merge and dedupe all collector outputs
+   - xss-only mode:
+     - read user provided URL file directly
+     - skip waymore/katana/crawlergo completely
 2. Extract endpoints and params from JS
 3. Build scan targets
    - keep crawled URLs directly (avoid dropping known vulnerable links)

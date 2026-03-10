@@ -1,19 +1,16 @@
-# Root domain for waymore.
-# Example: vulnweb.com
-# Required only when collector.use_waymore=true.
-# Leave empty when waymore is disabled.
-domain: ""
+# Single URL input (equivalent to CLI -u).
+# Use this for one target URL.
+# Leave empty when using input_file.
+input_url: ""
 
-# Subdomain URL list file for katana input.
-# Required when collector.use_katana=true or collector.use_katana_headless=true,
-# and xss_only_file is empty.
-# Scope note: when domain is empty, collector will derive root-domain scope
-# from hosts in this file for post-merge filtering.
-subs_file: subs.txt
+# Batch URL list input file (equivalent to CLI -i).
+# Use this for multi-target URLs, one per line.
+# Leave empty when using input_url.
+input_file: urls.txt
 
 # XSS-only mode input URL file.
 # When set (or CLI -xss-only is used), collector stage is skipped,
-# and -domain/-i are not required.
+# and -u/-i are not required.
 xss_only_file: ""
 
 # Output directory for all generated artifacts.
@@ -56,11 +53,14 @@ notify:
 
 collector:
   # Enable waymore collector.
-  # Can be overridden by CLI: -waymore=true/false
+  # Can be overridden by CLI: -waymore=true/false.
+  # When enabled, roots are auto-derived from input_url/input_file
+  # and passed to waymore in batch mode.
   use_waymore: true
 
   # Enable katana collector.
   # Standard high-coverage round.
+  # Input source is input_url/input_file.
   use_katana: true
 
   # Enable katana headless collector.

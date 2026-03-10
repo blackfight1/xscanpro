@@ -12,15 +12,15 @@ It uses neutral markers and context-aware verification.
 ## Features
 
 - URL collection with two tools:
-  - waymore (root domain input)
-  - katana (subdomain URL list input)
+  - waymore (roots auto-derived from `-u/-i`)
+  - katana (directly from `-u/-i` URL input)
 - Collector scheduling strategy:
   - waymore + katana standard round run in parallel
   - katana headless round runs after standard round (for SPA routes/XHR-triggered links)
   - headless round supports optional `-no-sandbox` (configurable)
   - if katana headless process is killed (e.g. OOM), it will be skipped without breaking the whole pipeline
   - both katana rounds apply static-extension exclusion to reduce invalid asset crawling
-  - merged URL results are scope-filtered again (prefer `-domain`, fallback to root domains derived from `-i`)
+  - merged URL results are scope-filtered by hosts/roots derived from `-u/-i`
 - JS endpoint and parameter extraction
 - Reflected XSS focused scanning
 - Optional DingTalk notification when findings are produced (with per-site cap)
@@ -71,14 +71,19 @@ Run on Linux:
 
 ```powershell
 -config config.yaml   # config file path
--domain example.com   # root domain for waymore (required only when waymore enabled)
--i subs.txt           # subdomain URL list file for katana
+-u https://a.example.com/path    # single URL input
+-i urls.txt           # batch URL list input file
 -xss-only urls.txt    # xss-only mode: skip collector, scan this URL file directly
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
 -waymore false        # override collector.use_waymore (true/false)
 -v                    # verbose logs
 ```
+
+Input rule:
+
+- `-u` and `-i` are mutually exclusive.
+- In full mode, provide exactly one of them.
 
 Notes:
 
@@ -90,7 +95,9 @@ Notes:
 Edit `config.yaml` (fully commented).
 Common keys:
 
-- `domain` (required only when `collector.use_waymore=true`)
+- `input_url` (single URL input, same as `-u`)
+- `input_file` (batch URL file input, same as `-i`)
+- `input_url` and `input_file` are mutually exclusive in full mode
 - `xss_only_file` (set this to enable xss-only mode and skip collector)
 - `collector.use_waymore`
 - `collector.use_katana`
@@ -136,7 +143,7 @@ Notification behavior:
 
 Terminal output style:
 
-- startup summary (mode/domain/output/workers/notify)
+- startup summary (mode/input/output/workers/notify)
 - stage blocks for collector / JS discovery / target generation / scanner
 - inline progress lines for JS and scan phases
 - highlighted `[HIT]` blocks for findings
@@ -155,8 +162,9 @@ Artifacts:
 
 1. Collect URLs (full mode) or load URLs (xss-only mode)
    - full mode:
-     - waymore with root domain
-     - katana standard round with subdomain URL list file
+     - input from `-u` or `-i` (mutually exclusive)
+     - waymore with unique root domains auto-derived from input URLs
+     - katana standard round with input URL list
      - katana headless round for SPA dynamic routes
      - static extensions are excluded in katana crawling
      - merge and dedupe all collector outputs

@@ -73,7 +73,12 @@ func printHeader(cfg config.Config) {
 	fmt.Println(paint(clrBlue, line("=", 72)))
 	fmt.Println(paint(clrBold+clrCyan, " PROFILE"))
 	fmt.Printf("  %-18s %s\n", "mode", cfg.Mode)
-	fmt.Printf("  %-18s %s\n", "domain", cfg.Domain)
+	if strings.TrimSpace(cfg.InputURL) != "" {
+		fmt.Printf("  %-18s %s\n", "input(-u)", cfg.InputURL)
+	}
+	if strings.TrimSpace(cfg.InputFile) != "" {
+		fmt.Printf("  %-18s %s\n", "input(-i)", cfg.InputFile)
+	}
 	fmt.Printf("  %-18s %s\n", "out", filepath.Clean(cfg.OutDir))
 	fmt.Printf("  %-18s %s\n", "param strategy", cfg.Target.ParamStrategy)
 	if strings.TrimSpace(cfg.XSSOnlyFile) != "" {
@@ -189,6 +194,68 @@ func loadXSSOnlyInput(filePath string) (model.CrawlResult, error) {
 	out.URLs = urls
 	out.JSURLs = js
 	return out, nil
+}
+
+func loadCollectorInputs(singleURL, inputFile string) ([]string, error) {
+	raw := make([]string, 0, 128)
+	u := strings.TrimSpace(singleURL)
+	f := strings.TrimSpace(inputFile)
+	if u != "" {
+		raw = append(raw, u)
+	}
+	if f != "" {
+		lines, err := util.ReadLines(f)
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, lines...)
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		canon, err := util.CanonicalURL(line)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[canon]; ok {
+			continue
+		}
+		seen[canon] = struct{}{}
+		out = append(out, canon)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no valid URLs from -u/-i")
+	}
+	return out, nil
+}
+
+func summarizeScope(urls []string) string {
+	if len(urls) == 0 {
+		return "unknown"
+	}
+	hosts := map[string]struct{}{}
+	roots := map[string]struct{}{}
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		h := strings.ToLower(strings.TrimSpace(u.Hostname()))
+		if h == "" {
+			continue
+		}
+		hosts[h] = struct{}{}
+		if rd := registrableDomain(h); rd != "" {
+			roots[rd] = struct{}{}
+		}
+	}
+	if len(roots) == 1 {
+		for rd := range roots {
+			return rd
+		}
+	}
+	return fmt.Sprintf("multi-root(%d), hosts=%d", len(roots), len(hosts))
 }
 
 func registrableDomain(host string) string {
@@ -314,6 +381,16 @@ func main() {
 
 	printHeader(cfg)
 
+	var collectorInputs []string
+	if !xssOnlyMode {
+		var err error
+		collectorInputs, err = loadCollectorInputs(cfg.InputURL, cfg.InputFile)
+		if err != nil {
+			stageError(fmt.Sprintf("load collector input failed: %v", err))
+			os.Exit(1)
+		}
+	}
+
 	client := fetch.New(cfg.Scanner.HTTPTimeoutSec)
 	notifier := notify.New(notify.Config{
 		Enabled:    cfg.Notify.Enabled,
@@ -351,11 +428,12 @@ func main() {
 		s1 := stageStart(1, totalStages, "Collector")
 		headlessNoSandbox := cfg.Collector.KatanaHeadlessNoSandbox
 		stageInfo("sources", "waymore + katana(std) + katana(headless)")
-		stageInfo("scope", cfg.Domain)
+		stageInfo("scope", summarizeScope(collectorInputs))
+		stageInfo("input urls", len(collectorInputs))
 		stageInfo("katana std", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatana, cfg.Collector.KatanaConcurrency, cfg.Collector.KatanaDepth))
 		stageInfo("katana hl", fmt.Sprintf("enabled=%t,c=%d,d=%d,no-sandbox=%t", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth, headlessNoSandbox))
 		var err error
-		crawled, err = collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
+		crawled, err = collector.Collect(cfg.OutDir, collectorInputs, collector.Options{
 			UseWaymore:                cfg.Collector.UseWaymore,
 			UseKatana:                 cfg.Collector.UseKatana,
 			UseKatanaHeadless:         cfg.Collector.UseKatanaHeadless,
@@ -375,11 +453,11 @@ func main() {
 
 	s2 := stageStart(2, totalStages, "JS Discovery")
 	stageInfo("js workers", cfg.Scanner.JSWorkers)
-	jsf := jsfinder.New(client, cfg.Domain, cfg.Scanner.JSWorkers, cfg.Verbose)
+	jsf := jsfinder.New(client, "", cfg.Scanner.JSWorkers, cfg.Verbose)
 	jsd := jsf.Discover(crawled.JSURLs)
 	scopeHosts, scopeRoots := scopeFromURLs(crawled.URLs)
 	beforeEndpoints := len(jsd.Endpoints)
-	jsd.Endpoints = filterScopeURLs(jsd.Endpoints, cfg.Domain, scopeHosts, scopeRoots)
+	jsd.Endpoints = filterScopeURLs(jsd.Endpoints, "", scopeHosts, scopeRoots)
 	if len(jsd.Endpoints) != beforeEndpoints {
 		stageInfo("scope filter", fmt.Sprintf("endpoints %d -> %d", beforeEndpoints, len(jsd.Endpoints)))
 	}
@@ -398,7 +476,7 @@ func main() {
 	s3 := stageStart(3, totalStages, "Target Generation")
 	stageInfo("param strategy", cfg.Target.ParamStrategy)
 	stageInfo("smart dedupe", cfg.Target.SmartDedupe)
-	targets := targetgen.BuildTargets(cfg.Domain, crawled.URLs, jsd.Endpoints, jsd.Params, targetgen.Options{
+	targets := targetgen.BuildTargets("", crawled.URLs, jsd.Endpoints, jsd.Params, targetgen.Options{
 		MaxParamsPerURL: cfg.Scanner.MaxParamsPerURL,
 		AllParams:       cfg.Scanner.AllParams,
 		SmartDedupe:     cfg.Target.SmartDedupe,
@@ -455,8 +533,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	summaryScope := cfg.Domain
-	if strings.TrimSpace(summaryScope) == "" && xssOnlyMode {
+	summaryScope := summarizeScope(crawled.URLs)
+	if xssOnlyMode {
 		summaryScope = "xss-only"
 	}
 	notifier.NotifySummary(summaryScope, len(targets), report.TotalFindings, time.Since(start), cfg.OutDir)

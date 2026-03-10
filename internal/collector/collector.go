@@ -22,6 +22,8 @@ import (
 
 const (
 	waymoreOut        = "tmp_waymore_urls.txt"
+	waymoreRootsIn    = "tmp_waymore_roots.txt"
+	katanaInputFile   = "tmp_katana_input_urls.txt"
 	katanaOut         = "tmp_katana_urls.txt"
 	katanaHeadlessOut = "tmp_katana_headless_urls.txt"
 )
@@ -56,21 +58,17 @@ type Options struct {
 	KatanaHeadlessDepth       int
 }
 
-func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, error) {
+func Collect(outDir string, inputURLs []string, opt Options) (model.CrawlResult, error) {
 	var out model.CrawlResult
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return out, err
 	}
-	root := normalizeRootDomain(domain)
-	if opt.UseWaymore && root == "" {
-		return out, fmt.Errorf("invalid -domain: %s", domain)
+	if len(inputURLs) == 0 {
+		return out, fmt.Errorf("empty collector input URLs")
 	}
 	if !opt.UseWaymore && !opt.UseKatana && !opt.UseKatanaHeadless {
 		return out, fmt.Errorf("waymore and katana rounds are all disabled")
 	}
-
-	waymoreTmpPath := filepath.Join(outDir, waymoreOut)
-	defer safeRemove(waymoreTmpPath)
 
 	if opt.UseWaymore {
 		if _, err := exec.LookPath("waymore"); err != nil {
@@ -82,33 +80,52 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			return out, fmt.Errorf("katana not found: %w", err)
 		}
 	}
-	if opt.UseKatana || opt.UseKatanaHeadless {
-		if _, err := os.Stat(subsFile); err != nil {
-			return out, fmt.Errorf("invalid -i file: %w", err)
-		}
-	}
 	allowedHosts := map[string]struct{}{}
 	allowedRoots := map[string]struct{}{}
-	if opt.UseKatana || opt.UseKatanaHeadless {
-		lines, err := util.ReadLines(subsFile)
-		if err != nil {
-			return out, fmt.Errorf("read -i file: %w", err)
+	katanaInputs := make([]string, 0, len(inputURLs))
+	for _, line := range inputURLs {
+		canon, host := normalizeInputURL(line)
+		if canon == "" || host == "" {
+			continue
 		}
-		if len(lines) == 0 {
-			return out, fmt.Errorf("-i file is empty")
-		}
-		for _, line := range lines {
-			if host := parseInputHost(line); host != "" {
-				allowedHosts[host] = struct{}{}
-				if rd := registrableDomain(host); rd != "" {
-					allowedRoots[rd] = struct{}{}
-				}
-			}
-		}
-		if len(allowedHosts) == 0 {
-			return out, fmt.Errorf("-i file has no valid hosts")
+		katanaInputs = append(katanaInputs, canon)
+		allowedHosts[host] = struct{}{}
+		if rd := registrableDomain(host); rd != "" {
+			allowedRoots[rd] = struct{}{}
 		}
 	}
+	katanaInputs = util.UniqueStrings(katanaInputs)
+	sort.Strings(katanaInputs)
+	if len(katanaInputs) == 0 {
+		return out, fmt.Errorf("collector input has no valid URLs")
+	}
+	if len(allowedHosts) == 0 {
+		return out, fmt.Errorf("collector input has no valid hosts")
+	}
+	if opt.UseWaymore && len(allowedRoots) == 0 {
+		return out, fmt.Errorf("collector input has no valid root domains for waymore")
+	}
+
+	waymoreTmpPath := filepath.Join(outDir, waymoreOut)
+	waymoreRootsPath := filepath.Join(outDir, waymoreRootsIn)
+	katanaInputPath := filepath.Join(outDir, katanaInputFile)
+	defer safeRemove(waymoreTmpPath)
+	defer safeRemove(waymoreRootsPath)
+	defer safeRemove(katanaInputPath)
+	if err := util.WriteLines(katanaInputPath, katanaInputs); err != nil {
+		return out, fmt.Errorf("write katana input file: %w", err)
+	}
+	if opt.UseWaymore {
+		roots := make([]string, 0, len(allowedRoots))
+		for rd := range allowedRoots {
+			roots = append(roots, rd)
+		}
+		sort.Strings(roots)
+		if err := util.WriteLines(waymoreRootsPath, roots); err != nil {
+			return out, fmt.Errorf("write waymore roots file: %w", err)
+		}
+	}
+
 	if opt.KatanaDepth <= 0 {
 		opt.KatanaDepth = 4
 	}
@@ -137,7 +154,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			go func() {
 				defer wg.Done()
 				if err := run(ctx, outDir, "waymore",
-					"-i", root,
+					"-i", filepath.Base(waymoreRootsPath),
 					"-mode", "U",
 					"-nlf",
 					"-fc", "404",
@@ -151,7 +168,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := runKatana(ctx, outDir, subsFile, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false, false); err != nil {
+				if err := runKatana(ctx, outDir, katanaInputPath, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false, false); err != nil {
 					errCh <- fmt.Errorf("katana failed: %w", err)
 				}
 			}()
@@ -172,7 +189,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 		files = append(files, katOut)
 	}
 	if opt.UseKatanaHeadless {
-		if err := runKatana(ctx, outDir, subsFile, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true, opt.KatanaHeadlessNoSandbox); err != nil {
+		if err := runKatana(ctx, outDir, katanaInputPath, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true, opt.KatanaHeadlessNoSandbox); err != nil {
 			if isProcessKilledError(err) {
 				fmt.Printf("[collector] katana headless was killed, skip headless round and continue\n")
 			} else {
@@ -187,7 +204,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 	if err != nil {
 		return out, err
 	}
-	urls = filterScopeURLs(urls, root, allowedHosts, allowedRoots)
+	urls = filterScopeURLs(urls, allowedHosts, allowedRoots)
 	js := extractJS(urls)
 
 	out.URLs = urls
@@ -199,10 +216,10 @@ func safeRemove(path string) {
 	_ = os.Remove(path)
 }
 
-func runKatana(ctx context.Context, outDir, subsFile, outFile string, depth, concurrency int, headless, noSandbox bool) error {
-	absSubs, _ := filepath.Abs(subsFile)
+func runKatana(ctx context.Context, outDir, inputFile, outFile string, depth, concurrency int, headless, noSandbox bool) error {
+	absInput, _ := filepath.Abs(inputFile)
 	args := []string{
-		"-list", absSubs,
+		"-list", absInput,
 		"-fs", "rdn",
 		"-jc",
 		"-kf", "all",
@@ -238,8 +255,8 @@ func parseInputHost(raw string) string {
 	return ""
 }
 
-func filterScopeURLs(urls []string, root string, allowedHosts, allowedRoots map[string]struct{}) []string {
-	if root == "" && len(allowedHosts) == 0 && len(allowedRoots) == 0 {
+func filterScopeURLs(urls []string, allowedHosts, allowedRoots map[string]struct{}) []string {
+	if len(allowedHosts) == 0 && len(allowedRoots) == 0 {
 		return urls
 	}
 	out := make([]string, 0, len(urls))
@@ -252,18 +269,34 @@ func filterScopeURLs(urls []string, root string, allowedHosts, allowedRoots map[
 		if host == "" {
 			continue
 		}
-		if root != "" {
-			// -domain has the highest priority: strict domain-scope filter.
-			if util.ScopeMatch(host, root) {
-				out = append(out, raw)
-			}
-			continue
-		}
 		if hostInAllowed(host, allowedHosts) || hostInAllowedRoots(host, allowedRoots) {
 			out = append(out, raw)
 		}
 	}
 	return out
+}
+
+func normalizeInputURL(raw string) (string, string) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", ""
+	}
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Hostname() == "" {
+		return "", ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return "", ""
+	}
+	canon, err := util.CanonicalURL(u.String())
+	if err != nil {
+		return "", ""
+	}
+	return canon, strings.ToLower(strings.TrimSpace(u.Hostname()))
 }
 
 func hostInAllowed(host string, allowedHosts map[string]struct{}) bool {
@@ -389,18 +422,4 @@ func extractJS(urls []string) []string {
 	out = util.UniqueStrings(out)
 	sort.Strings(out)
 	return out
-}
-
-func normalizeRootDomain(input string) string {
-	s := strings.TrimSpace(strings.ToLower(input))
-	s = strings.TrimPrefix(s, "http://")
-	s = strings.TrimPrefix(s, "https://")
-	s = strings.TrimPrefix(s, "//")
-	if strings.Contains(s, "/") {
-		s = strings.SplitN(s, "/", 2)[0]
-	}
-	if strings.Contains(s, ":") {
-		s = strings.SplitN(s, ":", 2)[0]
-	}
-	return s
 }

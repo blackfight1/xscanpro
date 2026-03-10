@@ -49,6 +49,8 @@ var (
 		".css": {}, ".woff": {}, ".woff2": {}, ".ttf": {}, ".eot": {}, ".otf": {},
 		".mp4": {}, ".mp3": {}, ".wav": {}, ".avi": {}, ".mov": {}, ".webm": {},
 		".pdf": {}, ".zip": {}, ".rar": {}, ".7z": {}, ".tar": {}, ".gz": {},
+		".map": {}, ".webmanifest": {}, ".swf": {}, ".apk": {}, ".exe": {}, ".bin": {}, ".dmg": {}, ".iso": {},
+		".doc": {}, ".docx": {}, ".xls": {}, ".xlsx": {}, ".ppt": {}, ".pptx": {},
 	}
 )
 
@@ -75,7 +77,8 @@ func printHeader(cfg config.Config) {
 	if strings.TrimSpace(cfg.XSSOnlyFile) != "" {
 		fmt.Printf("  %-18s %s\n", "xss only", cfg.XSSOnlyFile)
 	}
-	fmt.Printf("  %-18s waymore=%t, katana=%t, crawlergo=%t\n", "collector", cfg.Collector.UseWaymore, cfg.Collector.UseKatana, cfg.Collector.UseCrawlergo)
+	fmt.Printf("  %-18s waymore=%t, katana=%t\n", "collector", cfg.Collector.UseWaymore, cfg.Collector.UseKatana)
+	fmt.Printf("  %-18s enabled=%t, c=%d, d=%d\n", "katana hl", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth)
 	fmt.Printf("  %-18s js=%d, scan=%d\n", "workers", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
 	fmt.Printf("  %-18s enabled=%t, batch=%d\n", "post scan", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
 	fmt.Printf("  %-18s enabled=%t, size=%d\n", "scan batch", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
@@ -255,24 +258,19 @@ func main() {
 		stageDone(s1, "input loaded")
 	} else {
 		s1 := stageStart(1, totalStages, "Collector")
-		stageInfo("sources", "waymore + katana(full) + crawlergo(batch)")
-		stageInfo("crawlergo batch", fmt.Sprintf("enabled=%t,size=%d,continue_timeout=%t", cfg.Collector.CrawlergoBatchEnabled, cfg.Collector.CrawlergoBatchSize, cfg.Collector.CrawlergoContinueOnTimeout))
+		stageInfo("sources", "waymore + katana(std) + katana(headless)")
 		stageInfo("scope", cfg.Domain)
+		stageInfo("katana std", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatana, cfg.Collector.KatanaConcurrency, cfg.Collector.KatanaDepth))
+		stageInfo("katana hl", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth))
 		var err error
 		crawled, err = collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
-			UseWaymore:                 cfg.Collector.UseWaymore,
-			UseKatana:                  cfg.Collector.UseKatana,
-			UseCrawlergo:               cfg.Collector.UseCrawlergo,
-			KatanaConcurrency:          cfg.Collector.KatanaConcurrency,
-			KatanaDepth:                cfg.Collector.KatanaDepth,
-			CrawlergoBin:               cfg.Collector.CrawlergoBin,
-			CrawlergoChrome:            cfg.Collector.CrawlergoChrome,
-			CrawlergoTabs:              cfg.Collector.CrawlergoTabs,
-			CrawlergoRobots:            cfg.Collector.CrawlergoRobots,
-			CrawlergoTimeout:           cfg.Collector.CrawlergoTimeout,
-			CrawlergoBatchEnabled:      cfg.Collector.CrawlergoBatchEnabled,
-			CrawlergoBatchSize:         cfg.Collector.CrawlergoBatchSize,
-			CrawlergoContinueOnTimeout: cfg.Collector.CrawlergoContinueOnTimeout,
+			UseWaymore:                cfg.Collector.UseWaymore,
+			UseKatana:                 cfg.Collector.UseKatana,
+			UseKatanaHeadless:         cfg.Collector.UseKatanaHeadless,
+			KatanaConcurrency:         cfg.Collector.KatanaConcurrency,
+			KatanaDepth:               cfg.Collector.KatanaDepth,
+			KatanaHeadlessConcurrency: cfg.Collector.KatanaHeadlessConcurrency,
+			KatanaHeadlessDepth:       cfg.Collector.KatanaHeadlessDepth,
 		})
 		if err != nil {
 			stageError(fmt.Sprintf("collection failed: %v", err))

@@ -4,9 +4,11 @@
 # Leave empty when waymore is disabled.
 domain: ""
 
-# Subdomain URL list file for katana/crawlergo input.
-# Required when collector.use_katana=true or collector.use_crawlergo=true,
+# Subdomain URL list file for katana input.
+# Required when collector.use_katana=true or collector.use_katana_headless=true,
 # and xss_only_file is empty.
+# Scope note: when domain is empty, collector will derive root-domain scope
+# from hosts in this file for post-merge filtering.
 subs_file: subs.txt
 
 # XSS-only mode input URL file.
@@ -58,11 +60,12 @@ collector:
   use_waymore: true
 
   # Enable katana collector.
+  # Standard high-coverage round.
   use_katana: true
 
-  # Enable crawlergo collector.
-  # Execution order: waymore+katana (parallel) -> crawlergo (serial).
-  use_crawlergo: true
+  # Enable katana headless collector.
+  # Runs after standard katana round, used for SPA/dynamic route expansion.
+  use_katana_headless: true
 
   # Katana crawling concurrency.
   # 0 means use mode default.
@@ -70,35 +73,15 @@ collector:
 
   # Katana crawl depth.
   # 0 means use mode default.
-  katana_depth: 3
+  katana_depth: 4
 
-  # Crawlergo executable name or absolute path.
-  crawlergo_bin: crawlergo
-
-  # Chromium/Chrome path required by crawlergo.
-  crawlergo_chrome_path: /usr/bin/google-chrome
-
-  # Crawlergo max tab count (-t).
+  # Katana headless round concurrency.
   # 0 means use mode default.
-  crawlergo_tabs: 8
+  katana_headless_concurrency: 8
 
-  # Enable crawlergo robots path discovery (--robots-path).
-  crawlergo_robots_path: true
-
-  # Crawlergo timeout in seconds.
-  # 0 means use mode default.
-  crawlergo_timeout_sec: 1200
-
-  # Enable crawlergo input batching only.
-  # waymore + katana always run on full input first.
-  crawlergo_batch_enabled: true
-
-  # URL count per crawlergo batch.
-  # Recommended 50 for large-scope stability.
-  crawlergo_batch_size: 50
-
-  # If one crawlergo batch times out, skip it and continue next batch.
-  crawlergo_continue_on_timeout: true
+  # Katana headless round depth.
+  # 0 means follow katana_depth.
+  katana_headless_depth: 0
 
 target:
   # Enable target smart dedupe.

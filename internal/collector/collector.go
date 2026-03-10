@@ -13,15 +13,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"xscanpro/internal/model"
 	"xscanpro/internal/util"
 )
 
 const (
-	waymoreOut = "tmp_waymore_urls.txt"
-	katanaOut  = "tmp_katana_urls.txt"
+	waymoreOut        = "tmp_waymore_urls.txt"
+	katanaOut         = "tmp_katana_urls.txt"
+	katanaHeadlessOut = "tmp_katana_headless_urls.txt"
 )
 
 var jsRe = regexp.MustCompile(`(?i)\.m?js(?:\?|$)`)
@@ -31,6 +33,8 @@ var staticExclude = []string{
 	"css", "woff", "woff2", "ttf", "eot", "otf",
 	"mp4", "mp3", "wav", "avi", "mov", "webm",
 	"pdf", "zip", "rar", "7z", "tar", "gz",
+	"map", "webmanifest", "swf", "apk", "exe", "bin", "dmg", "iso",
+	"doc", "docx", "xls", "xlsx", "ppt", "pptx",
 }
 
 var staticExtSet = func() map[string]struct{} {
@@ -42,19 +46,13 @@ var staticExtSet = func() map[string]struct{} {
 }()
 
 type Options struct {
-	UseWaymore                 bool
-	UseKatana                  bool
-	UseCrawlergo               bool
-	KatanaConcurrency          int
-	KatanaDepth                int
-	CrawlergoBin               string
-	CrawlergoChrome            string
-	CrawlergoTabs              int
-	CrawlergoRobots            bool
-	CrawlergoTimeout           int
-	CrawlergoBatchEnabled      bool
-	CrawlergoBatchSize         int
-	CrawlergoContinueOnTimeout bool
+	UseWaymore                bool
+	UseKatana                 bool
+	UseKatanaHeadless         bool
+	KatanaConcurrency         int
+	KatanaDepth               int
+	KatanaHeadlessConcurrency int
+	KatanaHeadlessDepth       int
 }
 
 func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, error) {
@@ -66,8 +64,8 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 	if opt.UseWaymore && root == "" {
 		return out, fmt.Errorf("invalid -domain: %s", domain)
 	}
-	if !opt.UseWaymore && !opt.UseKatana && !opt.UseCrawlergo {
-		return out, fmt.Errorf("waymore, katana and crawlergo are all disabled")
+	if !opt.UseWaymore && !opt.UseKatana && !opt.UseKatanaHeadless {
+		return out, fmt.Errorf("waymore and katana rounds are all disabled")
 	}
 
 	waymoreTmpPath := filepath.Join(outDir, waymoreOut)
@@ -78,33 +76,19 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			return out, fmt.Errorf("waymore not found: %w", err)
 		}
 	}
-	if opt.UseKatana {
+	if opt.UseKatana || opt.UseKatanaHeadless {
 		if _, err := exec.LookPath("katana"); err != nil {
 			return out, fmt.Errorf("katana not found: %w", err)
 		}
 	}
-	if opt.UseCrawlergo {
-		if strings.TrimSpace(opt.CrawlergoBin) == "" {
-			opt.CrawlergoBin = "crawlergo"
-		}
-		if _, err := exec.LookPath(opt.CrawlergoBin); err != nil {
-			return out, fmt.Errorf("crawlergo not found (%s): %w", opt.CrawlergoBin, err)
-		}
-		if strings.TrimSpace(opt.CrawlergoChrome) == "" {
-			return out, fmt.Errorf("crawlergo chrome path is empty")
-		}
-		if opt.CrawlergoTabs <= 0 {
-			opt.CrawlergoTabs = 10
-		}
-		if opt.CrawlergoTimeout <= 0 {
-			opt.CrawlergoTimeout = 1200
-		}
-	}
-	var subsLines []string
-	if opt.UseKatana || opt.UseCrawlergo {
+	if opt.UseKatana || opt.UseKatanaHeadless {
 		if _, err := os.Stat(subsFile); err != nil {
 			return out, fmt.Errorf("invalid -i file: %w", err)
 		}
+	}
+	allowedHosts := map[string]struct{}{}
+	allowedRoots := map[string]struct{}{}
+	if opt.UseKatana || opt.UseKatanaHeadless {
 		lines, err := util.ReadLines(subsFile)
 		if err != nil {
 			return out, fmt.Errorf("read -i file: %w", err)
@@ -112,16 +96,36 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 		if len(lines) == 0 {
 			return out, fmt.Errorf("-i file is empty")
 		}
-		subsLines = util.UniqueStrings(lines)
-		sort.Strings(subsLines)
+		for _, line := range lines {
+			if host := parseInputHost(line); host != "" {
+				allowedHosts[host] = struct{}{}
+				if rd := registrableDomain(host); rd != "" {
+					allowedRoots[rd] = struct{}{}
+				}
+			}
+		}
+		if len(allowedHosts) == 0 {
+			return out, fmt.Errorf("-i file has no valid hosts")
+		}
 	}
-	if opt.CrawlergoBatchSize <= 0 {
-		opt.CrawlergoBatchSize = 50
+	if opt.KatanaDepth <= 0 {
+		opt.KatanaDepth = 4
+	}
+	if opt.KatanaConcurrency <= 0 {
+		opt.KatanaConcurrency = 16
+	}
+	if opt.KatanaHeadlessDepth <= 0 {
+		opt.KatanaHeadlessDepth = opt.KatanaDepth
+	}
+	if opt.KatanaHeadlessConcurrency <= 0 {
+		opt.KatanaHeadlessConcurrency = 8
 	}
 
 	ctx := context.Background()
 	katOut := filepath.Join(outDir, katanaOut)
+	katHeadlessOut := filepath.Join(outDir, katanaHeadlessOut)
 	defer safeRemove(katOut)
+	defer safeRemove(katHeadlessOut)
 	files := make([]string, 0, 3)
 	if opt.UseWaymore || opt.UseKatana {
 		var wg sync.WaitGroup
@@ -146,16 +150,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				absSubs, _ := filepath.Abs(subsFile)
-				if err := run(ctx, outDir, "katana",
-					"-list", absSubs,
-					"-jc",
-					"-kf", "all",
-					"-d", fmt.Sprintf("%d", opt.KatanaDepth),
-					"-c", fmt.Sprintf("%d", opt.KatanaConcurrency),
-					"-ef", strings.Join(staticExclude, ","),
-					"-o", filepath.Base(katOut),
-				); err != nil {
+				if err := runKatana(ctx, outDir, subsFile, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false); err != nil {
 					errCh <- fmt.Errorf("katana failed: %w", err)
 				}
 			}()
@@ -175,47 +170,15 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 	if opt.UseKatana {
 		files = append(files, katOut)
 	}
-
-	if opt.UseCrawlergo {
-		crawlergoBatches := [][]string{subsLines}
-		if opt.CrawlergoBatchEnabled && len(subsLines) > opt.CrawlergoBatchSize {
-			crawlergoBatches = chunkLines(subsLines, opt.CrawlergoBatchSize)
-		}
-		for i, lines := range crawlergoBatches {
-			idx := i + 1
-			subsPath := filepath.Join(outDir, fmt.Sprintf("tmp_crawlergo_subs_%03d.txt", idx))
-			if err := util.WriteLines(subsPath, lines); err != nil {
-				return out, fmt.Errorf("write crawlergo subs batch %d: %w", idx, err)
+	if opt.UseKatanaHeadless {
+		if err := runKatana(ctx, outDir, subsFile, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true); err != nil {
+			if isProcessKilledError(err) {
+				fmt.Printf("[collector] katana headless was killed, skip headless round and continue\n")
+			} else {
+				return out, fmt.Errorf("katana headless failed: %w", err)
 			}
-			defer safeRemove(subsPath)
-
-			cgOut := filepath.Join(outDir, fmt.Sprintf("tmp_crawlergo_urls_%03d.txt", idx))
-			defer safeRemove(cgOut)
-			absSubs, _ := filepath.Abs(subsPath)
-			ctxCrawlergo, cancel := context.WithTimeout(context.Background(), time.Duration(opt.CrawlergoTimeout)*time.Second)
-			args := []string{
-				"-i", absSubs,
-				"-o", "txt",
-				"--output-txt", filepath.Base(cgOut),
-				"-c", opt.CrawlergoChrome,
-				"-t", fmt.Sprintf("%d", opt.CrawlergoTabs),
-			}
-			if opt.CrawlergoRobots {
-				args = append(args, "--robots-path")
-			}
-			err := run(ctxCrawlergo, outDir, opt.CrawlergoBin, args...)
-			cancel()
-			if err != nil {
-				if errors.Is(ctxCrawlergo.Err(), context.DeadlineExceeded) && opt.CrawlergoContinueOnTimeout {
-					fmt.Printf("[collector] crawlergo batch %d/%d timed out after %ds, continue next batch\n", idx, len(crawlergoBatches), opt.CrawlergoTimeout)
-					continue
-				}
-				if errors.Is(ctxCrawlergo.Err(), context.DeadlineExceeded) {
-					return out, fmt.Errorf("crawlergo timed out after %ds (batch %d/%d)", opt.CrawlergoTimeout, idx, len(crawlergoBatches))
-				}
-				return out, fmt.Errorf("crawlergo failed (batch %d/%d): %w", idx, len(crawlergoBatches), err)
-			}
-			files = append(files, cgOut)
+		} else {
+			files = append(files, katHeadlessOut)
 		}
 	}
 
@@ -223,6 +186,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 	if err != nil {
 		return out, err
 	}
+	urls = filterScopeURLs(urls, root, allowedHosts, allowedRoots)
 	js := extractJS(urls)
 
 	out.URLs = urls
@@ -230,31 +194,145 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 	return out, nil
 }
 
-func chunkLines(lines []string, size int) [][]string {
-	if len(lines) == 0 {
-		return nil
+func safeRemove(path string) {
+	_ = os.Remove(path)
+}
+
+func runKatana(ctx context.Context, outDir, subsFile, outFile string, depth, concurrency int, headless bool) error {
+	absSubs, _ := filepath.Abs(subsFile)
+	args := []string{
+		"-list", absSubs,
+		"-fs", "rdn",
+		"-jc",
+		"-kf", "all",
+		"-d", fmt.Sprintf("%d", depth),
+		"-c", fmt.Sprintf("%d", concurrency),
+		"-ef", strings.Join(staticExclude, ","),
+		"-o", filepath.Base(outFile),
 	}
-	if size <= 0 {
-		size = len(lines)
+	if headless {
+		args = append(args, "-hl")
 	}
-	out := make([][]string, 0, (len(lines)+size-1)/size)
-	for i := 0; i < len(lines); i += size {
-		end := i + size
-		if end > len(lines) {
-			end = len(lines)
+	return run(ctx, outDir, "katana", args...)
+}
+
+func parseInputHost(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	u, err := url.Parse(s)
+	if err == nil && u.Hostname() != "" {
+		return strings.ToLower(u.Hostname())
+	}
+	if !strings.Contains(s, "://") {
+		u2, err2 := url.Parse("http://" + s)
+		if err2 == nil && u2.Hostname() != "" {
+			return strings.ToLower(u2.Hostname())
 		}
-		out = append(out, lines[i:end])
+	}
+	return ""
+}
+
+func filterScopeURLs(urls []string, root string, allowedHosts, allowedRoots map[string]struct{}) []string {
+	if root == "" && len(allowedHosts) == 0 && len(allowedRoots) == 0 {
+		return urls
+	}
+	out := make([]string, 0, len(urls))
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+		if host == "" {
+			continue
+		}
+		if root != "" {
+			// -domain has the highest priority: strict domain-scope filter.
+			if util.ScopeMatch(host, root) {
+				out = append(out, raw)
+			}
+			continue
+		}
+		if hostInAllowed(host, allowedHosts) || hostInAllowedRoots(host, allowedRoots) {
+			out = append(out, raw)
+		}
 	}
 	return out
 }
-func safeRemove(path string) {
-	_ = os.Remove(path)
+
+func hostInAllowed(host string, allowedHosts map[string]struct{}) bool {
+	if len(allowedHosts) == 0 {
+		return false
+	}
+	if _, ok := allowedHosts[host]; ok {
+		return true
+	}
+	for ah := range allowedHosts {
+		if strings.HasSuffix(host, "."+ah) {
+			return true
+		}
+	}
+	return false
+}
+
+func hostInAllowedRoots(host string, allowedRoots map[string]struct{}) bool {
+	if len(allowedRoots) == 0 {
+		return false
+	}
+	rd := registrableDomain(host)
+	if rd == "" {
+		return false
+	}
+	_, ok := allowedRoots[rd]
+	return ok
+}
+
+func registrableDomain(host string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return ""
+	}
+	rd, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err == nil && rd != "" {
+		return rd
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "." + parts[len(parts)-1]
+	}
+	return h
 }
 
 func run(ctx context.Context, dir, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.Run()
+}
+
+func isProcessKilledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		if code == 137 || code == 9 {
+			return true
+		}
+	}
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "signal: killed") {
+		return true
+	}
+	if strings.Contains(s, "killed") && strings.Contains(s, "signal") {
+		return true
+	}
+	if strings.Contains(s, "exit status 137") {
+		return true
+	}
+	return false
 }
 
 func mergeURLFiles(files ...string) ([]string, error) {

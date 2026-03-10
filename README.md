@@ -11,15 +11,15 @@ It uses neutral markers and context-aware verification.
 
 ## Features
 
-- URL collection with three tools:
+- URL collection with two tools:
   - waymore (root domain input)
   - katana (subdomain URL list input)
-  - crawlergo (subdomain URL list input)
 - Collector scheduling strategy:
-  - waymore + katana run in parallel
-  - crawlergo runs after them (serial, lower peak memory pressure)
-  - crawlergo can run in batches (default 50 per batch)
-  - single crawlergo batch timeout can be skipped to continue next batch
+  - waymore + katana standard round run in parallel
+  - katana headless round runs after standard round (for SPA routes/XHR-triggered links)
+  - if katana headless process is killed (e.g. OOM), it will be skipped without breaking the whole pipeline
+  - both katana rounds apply static-extension exclusion to reduce invalid asset crawling
+  - merged URL results are scope-filtered again (prefer `-domain`, fallback to root domains derived from `-i`)
 - JS endpoint and parameter extraction
 - Reflected XSS focused scanning
 - Optional DingTalk notification when findings are produced (with per-site cap)
@@ -71,7 +71,7 @@ Run on Linux:
 ```powershell
 -config config.yaml   # config file path
 -domain example.com   # root domain for waymore (required only when waymore enabled)
--i subs.txt           # subdomain URL list file for katana/crawlergo
+-i subs.txt           # subdomain URL list file for katana
 -xss-only urls.txt    # xss-only mode: skip collector, scan this URL file directly
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
@@ -93,15 +93,11 @@ Common keys:
 - `xss_only_file` (set this to enable xss-only mode and skip collector)
 - `collector.use_waymore`
 - `collector.use_katana`
-- `collector.use_crawlergo`
-- `collector.crawlergo_bin`
-- `collector.crawlergo_chrome_path`
-- `collector.crawlergo_tabs`
-- `collector.crawlergo_robots_path`
-- `collector.crawlergo_timeout_sec`
-- `collector.crawlergo_batch_enabled`
-- `collector.crawlergo_batch_size`
-- `collector.crawlergo_continue_on_timeout`
+- `collector.use_katana_headless`
+- `collector.katana_concurrency`
+- `collector.katana_depth`
+- `collector.katana_headless_concurrency`
+- `collector.katana_headless_depth`
 - `target.smart_dedupe`
 - `target.param_strategy`
 - `target.high_value_global_params`
@@ -158,13 +154,13 @@ Artifacts:
 1. Collect URLs (full mode) or load URLs (xss-only mode)
    - full mode:
      - waymore with root domain
-     - katana with subdomain URL list file
-     - crawlergo with subdomain URL list file (batch mode supported)
-     - crawlergo single-batch timeout can continue next batch (if enabled)
+     - katana standard round with subdomain URL list file
+     - katana headless round for SPA dynamic routes
+     - static extensions are excluded in katana crawling
      - merge and dedupe all collector outputs
    - xss-only mode:
      - read user provided URL file directly
-     - skip waymore/katana/crawlergo completely
+     - skip waymore/katana completely
 2. Extract endpoints and params from JS
 3. Build scan targets
    - keep crawled URLs directly (avoid dropping known vulnerable links)
@@ -190,7 +186,6 @@ Artifacts:
 - POST mode only tests `application/x-www-form-urlencoded` style body submissions.
 - CSRF logic is intentionally not handled in this scanner.
 - Results should be manually validated in authorized scope.
-- When `collector.use_crawlergo=true`, ensure `crawlergo` and Chrome path are available.
 - `balanced`/`fast` are intended to use `batch` parameter strategy by default.
 - `deep` mode is intended to use `deep` parameter strategy by default.
 

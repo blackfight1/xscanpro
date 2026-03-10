@@ -26,19 +26,13 @@ type Config struct {
 }
 
 type CollectorConfig struct {
-	UseWaymore                 bool   `yaml:"use_waymore"`
-	UseKatana                  bool   `yaml:"use_katana"`
-	UseCrawlergo               bool   `yaml:"use_crawlergo"`
-	KatanaConcurrency          int    `yaml:"katana_concurrency"`
-	KatanaDepth                int    `yaml:"katana_depth"`
-	CrawlergoBin               string `yaml:"crawlergo_bin"`
-	CrawlergoChrome            string `yaml:"crawlergo_chrome_path"`
-	CrawlergoTabs              int    `yaml:"crawlergo_tabs"`
-	CrawlergoRobots            bool   `yaml:"crawlergo_robots_path"`
-	CrawlergoTimeout           int    `yaml:"crawlergo_timeout_sec"`
-	CrawlergoBatchEnabled      bool   `yaml:"crawlergo_batch_enabled"`
-	CrawlergoBatchSize         int    `yaml:"crawlergo_batch_size"`
-	CrawlergoContinueOnTimeout bool   `yaml:"crawlergo_continue_on_timeout"`
+	UseWaymore                bool `yaml:"use_waymore"`
+	UseKatana                 bool `yaml:"use_katana"`
+	UseKatanaHeadless         bool `yaml:"use_katana_headless"`
+	KatanaConcurrency         int  `yaml:"katana_concurrency"`
+	KatanaDepth               int  `yaml:"katana_depth"`
+	KatanaHeadlessConcurrency int  `yaml:"katana_headless_concurrency"`
+	KatanaHeadlessDepth       int  `yaml:"katana_headless_depth"`
 }
 
 type TargetConfig struct {
@@ -89,7 +83,7 @@ func Parse() Config {
 
 	configPath := flag.String("config", "config.yaml", "yaml config file path")
 	domain := flag.String("domain", "", "root domain for waymore, e.g. example.com")
-	subsFile := flag.String("i", "", "subdomain URL list file for katana/crawlergo")
+	subsFile := flag.String("i", "", "subdomain URL list file for katana")
 	xssOnlyFile := flag.String("xss-only", "", "xss-only mode URL list file, skip collectors")
 	outDir := flag.String("out", "", "output directory")
 	mode := flag.String("mode", "", "scan profile: fast | balanced | deep")
@@ -121,17 +115,12 @@ func Parse() Config {
 			flag.Usage()
 			os.Exit(1)
 		}
-		if !cfg.Collector.UseWaymore && !cfg.Collector.UseKatana && !cfg.Collector.UseCrawlergo {
-			fmt.Println("collector.use_waymore, collector.use_katana and collector.use_crawlergo cannot all be false")
+		if !cfg.Collector.UseWaymore && !cfg.Collector.UseKatana && !cfg.Collector.UseKatanaHeadless {
+			fmt.Println("collector.use_waymore/use_katana/use_katana_headless cannot all be false")
 			os.Exit(1)
 		}
-		if (cfg.Collector.UseKatana || cfg.Collector.UseCrawlergo) && strings.TrimSpace(cfg.SubsFile) == "" {
-			fmt.Println("missing -i / subs_file (required when katana or crawlergo is enabled)")
-			flag.Usage()
-			os.Exit(1)
-		}
-		if cfg.Collector.UseCrawlergo && strings.TrimSpace(cfg.Collector.CrawlergoChrome) == "" {
-			fmt.Println("missing collector.crawlergo_chrome_path (required when crawlergo is enabled)")
+		if (cfg.Collector.UseKatana || cfg.Collector.UseKatanaHeadless) && strings.TrimSpace(cfg.SubsFile) == "" {
+			fmt.Println("missing -i / subs_file (required when katana or katana_headless is enabled)")
 			os.Exit(1)
 		}
 	}
@@ -158,17 +147,10 @@ func defaultConfig() Config {
 		OutDir: "output",
 		Mode:   "balanced",
 		Collector: CollectorConfig{
-			UseWaymore:                 true,
-			UseKatana:                  true,
-			UseCrawlergo:               true,
-			CrawlergoBin:               "crawlergo",
-			CrawlergoChrome:            "/usr/bin/google-chrome",
-			CrawlergoTabs:              10,
-			CrawlergoRobots:            true,
-			CrawlergoTimeout:           1200,
-			CrawlergoBatchEnabled:      true,
-			CrawlergoBatchSize:         50,
-			CrawlergoContinueOnTimeout: true,
+			UseWaymore:                true,
+			UseKatana:                 true,
+			UseKatanaHeadless:         true,
+			KatanaHeadlessConcurrency: 8,
 		},
 		Target: TargetConfig{
 			SmartDedupe:           true,
@@ -274,13 +256,13 @@ func applyModeDefaults(cfg *Config) {
 			cfg.Collector.KatanaConcurrency = 40
 		}
 		if cfg.Collector.KatanaDepth <= 0 {
-			cfg.Collector.KatanaDepth = 2
+			cfg.Collector.KatanaDepth = 3
 		}
-		if cfg.Collector.CrawlergoTabs <= 0 {
-			cfg.Collector.CrawlergoTabs = 12
+		if cfg.Collector.KatanaHeadlessConcurrency <= 0 {
+			cfg.Collector.KatanaHeadlessConcurrency = 12
 		}
-		if cfg.Collector.CrawlergoTimeout <= 0 {
-			cfg.Collector.CrawlergoTimeout = 900
+		if cfg.Collector.KatanaHeadlessDepth <= 0 {
+			cfg.Collector.KatanaHeadlessDepth = cfg.Collector.KatanaDepth
 		}
 		if cfg.Scanner.JSWorkers <= 0 {
 			cfg.Scanner.JSWorkers = 35
@@ -326,13 +308,13 @@ func applyModeDefaults(cfg *Config) {
 			cfg.Collector.KatanaConcurrency = 12
 		}
 		if cfg.Collector.KatanaDepth <= 0 {
-			cfg.Collector.KatanaDepth = 4
+			cfg.Collector.KatanaDepth = 5
 		}
-		if cfg.Collector.CrawlergoTabs <= 0 {
-			cfg.Collector.CrawlergoTabs = 8
+		if cfg.Collector.KatanaHeadlessConcurrency <= 0 {
+			cfg.Collector.KatanaHeadlessConcurrency = 6
 		}
-		if cfg.Collector.CrawlergoTimeout <= 0 {
-			cfg.Collector.CrawlergoTimeout = 1800
+		if cfg.Collector.KatanaHeadlessDepth <= 0 {
+			cfg.Collector.KatanaHeadlessDepth = cfg.Collector.KatanaDepth
 		}
 		if cfg.Scanner.JSWorkers <= 0 {
 			cfg.Scanner.JSWorkers = 12
@@ -379,13 +361,13 @@ func applyModeDefaults(cfg *Config) {
 			cfg.Collector.KatanaConcurrency = 16
 		}
 		if cfg.Collector.KatanaDepth <= 0 {
-			cfg.Collector.KatanaDepth = 3
+			cfg.Collector.KatanaDepth = 4
 		}
-		if cfg.Collector.CrawlergoTabs <= 0 {
-			cfg.Collector.CrawlergoTabs = 8
+		if cfg.Collector.KatanaHeadlessConcurrency <= 0 {
+			cfg.Collector.KatanaHeadlessConcurrency = 8
 		}
-		if cfg.Collector.CrawlergoTimeout <= 0 {
-			cfg.Collector.CrawlergoTimeout = 1200
+		if cfg.Collector.KatanaHeadlessDepth <= 0 {
+			cfg.Collector.KatanaHeadlessDepth = cfg.Collector.KatanaDepth
 		}
 		if cfg.Scanner.JSWorkers <= 0 {
 			cfg.Scanner.JSWorkers = 14
@@ -432,12 +414,6 @@ func applyModeDefaults(cfg *Config) {
 	}
 	if cfg.Scanner.VerifyWorkers < 0 {
 		cfg.Scanner.VerifyWorkers = 0
-	}
-	if strings.TrimSpace(cfg.Collector.CrawlergoBin) == "" {
-		cfg.Collector.CrawlergoBin = "crawlergo"
-	}
-	if cfg.Collector.CrawlergoBatchSize <= 0 {
-		cfg.Collector.CrawlergoBatchSize = 50
 	}
 	if cfg.Scanner.ScanBatchSize <= 0 {
 		cfg.Scanner.ScanBatchSize = 2000

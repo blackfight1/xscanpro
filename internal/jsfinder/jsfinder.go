@@ -104,12 +104,21 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 	ticker := time.NewTicker(700 * time.Millisecond)
 	defer ticker.Stop()
 	done := make(chan struct{})
+	startedAt := time.Now()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
 				p := atomic.LoadInt32(&processed)
-				fmt.Printf("\r  > js progress: %d/%d", p, total)
+				line := util.RenderProgressLine(
+					"  > js discovery",
+					int64(p),
+					int64(total),
+					22,
+					startedAt,
+					"",
+				)
+				fmt.Printf("\r%s", line)
 			case <-done:
 				return
 			}
@@ -166,7 +175,15 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 	}
 	wg.Wait()
 	close(done)
-	fmt.Printf("\r  > js progress: %d/%d\n", total, total)
+	finalLine := util.RenderProgressLine(
+		"  > js discovery",
+		int64(total),
+		int64(total),
+		22,
+		startedAt,
+		"done",
+	)
+	fmt.Printf("\r%s\n", finalLine)
 	if f.verbose {
 		fmt.Printf("  - js dedupe:       content_hash_skipped=%d, large_js_downgraded=%d\n",
 			atomic.LoadInt32(&dedupedByHash),

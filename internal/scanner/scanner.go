@@ -378,23 +378,33 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 	ticker := time.NewTicker(700 * time.Millisecond)
 	defer ticker.Stop()
 	stopProgress := make(chan struct{})
+	startedAt := time.Now()
 	shapeCounter := map[string]int{}
 	var shapeMu sync.Mutex
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				fmt.Printf("\r  > phase=%s | targets %d/%d | skip-shape %d | quick %d/%d | params %d | verify %d | findings %d",
+				doneTargets := atomic.LoadInt32(&processedTargets)
+				extra := fmt.Sprintf(
+					"phase=%s | quick %d/%d | verify %d | findings %d | skip-shape %d | params %d",
 					label,
-					atomic.LoadInt32(&processedTargets),
-					int32(len(targets)),
-					atomic.LoadInt32(&skippedByShape),
 					atomic.LoadInt32(&processedBatches),
 					atomic.LoadInt32(&generatedBatches),
-					atomic.LoadInt32(&generatedParams),
 					atomic.LoadInt32(&processedVerify),
 					atomic.LoadInt32(&findingCount),
+					atomic.LoadInt32(&skippedByShape),
+					atomic.LoadInt32(&generatedParams),
 				)
+				line := util.RenderProgressLine(
+					"  > scanner",
+					int64(doneTargets),
+					int64(len(targets)),
+					22,
+					startedAt,
+					extra,
+				)
+				fmt.Printf("\r%s", line)
 			case <-stopProgress:
 				return
 			}
@@ -506,17 +516,25 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 	collectDone.Wait()
 
 	close(stopProgress)
-	fmt.Printf("\r  > phase=%s | targets %d/%d | skip-shape %d | quick %d/%d | params %d | verify %d | findings %d\n",
+	finalExtra := fmt.Sprintf(
+		"phase=%s | quick %d/%d | verify %d | findings %d | skip-shape %d | params %d",
 		label,
-		processedTargets,
-		int32(len(targets)),
-		skippedByShape,
-		processedBatches,
-		generatedBatches,
-		generatedParams,
-		processedVerify,
-		findingCount,
+		atomic.LoadInt32(&processedBatches),
+		atomic.LoadInt32(&generatedBatches),
+		atomic.LoadInt32(&processedVerify),
+		atomic.LoadInt32(&findingCount),
+		atomic.LoadInt32(&skippedByShape),
+		atomic.LoadInt32(&generatedParams),
 	)
+	finalLine := util.RenderProgressLine(
+		"  > scanner",
+		int64(atomic.LoadInt32(&processedTargets)),
+		int64(len(targets)),
+		22,
+		startedAt,
+		finalExtra,
+	)
+	fmt.Printf("\r%s\n", finalLine)
 
 	return findings, hitGroups
 }

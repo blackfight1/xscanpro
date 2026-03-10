@@ -145,7 +145,7 @@ Terminal output style:
 
 - startup summary (mode/input/output/workers/notify)
 - stage blocks for collector / JS discovery / target generation / scanner
-- inline progress lines for JS and scan phases
+- inline progress bars for JS and scan phases (with speed/ETA)
 - highlighted `[HIT]` blocks for findings
 - final summary block
 

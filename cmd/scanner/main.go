@@ -437,6 +437,7 @@ func main() {
 			UseWaymore:                cfg.Collector.UseWaymore,
 			UseKatana:                 cfg.Collector.UseKatana,
 			UseKatanaHeadless:         cfg.Collector.UseKatanaHeadless,
+			KatanaHeadlessNoSandbox:   headlessNoSandbox,
 			KatanaConcurrency:         cfg.Collector.KatanaConcurrency,
 			KatanaDepth:               cfg.Collector.KatanaDepth,
 			KatanaHeadlessConcurrency: cfg.Collector.KatanaHeadlessConcurrency,

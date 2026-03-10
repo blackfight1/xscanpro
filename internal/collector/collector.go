@@ -49,6 +49,7 @@ type Options struct {
 	UseWaymore                bool
 	UseKatana                 bool
 	UseKatanaHeadless         bool
+	KatanaHeadlessNoSandbox   bool
 	KatanaConcurrency         int
 	KatanaDepth               int
 	KatanaHeadlessConcurrency int
@@ -150,7 +151,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := runKatana(ctx, outDir, subsFile, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false); err != nil {
+				if err := runKatana(ctx, outDir, subsFile, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false, false); err != nil {
 					errCh <- fmt.Errorf("katana failed: %w", err)
 				}
 			}()
@@ -171,7 +172,7 @@ func Collect(outDir, domain, subsFile string, opt Options) (model.CrawlResult, e
 		files = append(files, katOut)
 	}
 	if opt.UseKatanaHeadless {
-		if err := runKatana(ctx, outDir, subsFile, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true); err != nil {
+		if err := runKatana(ctx, outDir, subsFile, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true, opt.KatanaHeadlessNoSandbox); err != nil {
 			if isProcessKilledError(err) {
 				fmt.Printf("[collector] katana headless was killed, skip headless round and continue\n")
 			} else {
@@ -198,7 +199,7 @@ func safeRemove(path string) {
 	_ = os.Remove(path)
 }
 
-func runKatana(ctx context.Context, outDir, subsFile, outFile string, depth, concurrency int, headless bool) error {
+func runKatana(ctx context.Context, outDir, subsFile, outFile string, depth, concurrency int, headless, noSandbox bool) error {
 	absSubs, _ := filepath.Abs(subsFile)
 	args := []string{
 		"-list", absSubs,
@@ -212,6 +213,9 @@ func runKatana(ctx context.Context, outDir, subsFile, outFile string, depth, con
 	}
 	if headless {
 		args = append(args, "-hl")
+		if noSandbox {
+			args = append(args, "-no-sandbox")
+		}
 	}
 	return run(ctx, outDir, "katana", args...)
 }

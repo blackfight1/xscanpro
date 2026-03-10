@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
+
 	"xscanpro/internal/collector"
 	"xscanpro/internal/config"
 	"xscanpro/internal/fetch"
@@ -78,7 +80,7 @@ func printHeader(cfg config.Config) {
 		fmt.Printf("  %-18s %s\n", "xss only", cfg.XSSOnlyFile)
 	}
 	fmt.Printf("  %-18s waymore=%t, katana=%t\n", "collector", cfg.Collector.UseWaymore, cfg.Collector.UseKatana)
-	fmt.Printf("  %-18s enabled=%t, c=%d, d=%d\n", "katana hl", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth)
+	fmt.Printf("  %-18s enabled=%t, c=%d, d=%d, no-sandbox=%t\n", "katana hl", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth, cfg.Collector.KatanaHeadlessNoSandbox)
 	fmt.Printf("  %-18s js=%d, scan=%d\n", "workers", cfg.Scanner.JSWorkers, cfg.Scanner.ScanWorkers)
 	fmt.Printf("  %-18s enabled=%t, batch=%d\n", "post scan", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
 	fmt.Printf("  %-18s enabled=%t, size=%d\n", "scan batch", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
@@ -189,6 +191,95 @@ func loadXSSOnlyInput(filePath string) (model.CrawlResult, error) {
 	return out, nil
 }
 
+func registrableDomain(host string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return ""
+	}
+	rd, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err == nil && rd != "" {
+		return rd
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "." + parts[len(parts)-1]
+	}
+	return h
+}
+
+func scopeFromURLs(urls []string) (map[string]struct{}, map[string]struct{}) {
+	hosts := map[string]struct{}{}
+	roots := map[string]struct{}{}
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+		if host == "" {
+			continue
+		}
+		hosts[host] = struct{}{}
+		if rd := registrableDomain(host); rd != "" {
+			roots[rd] = struct{}{}
+		}
+	}
+	return hosts, roots
+}
+
+func inScopeBySets(host string, hosts, roots map[string]struct{}) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return false
+	}
+	if _, ok := hosts[h]; ok {
+		return true
+	}
+	for ah := range hosts {
+		if strings.HasSuffix(h, "."+ah) {
+			return true
+		}
+	}
+	if rd := registrableDomain(h); rd != "" {
+		if _, ok := roots[rd]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func filterScopeURLs(urls []string, domain string, hosts, roots map[string]struct{}) []string {
+	if strings.TrimSpace(domain) == "" && len(hosts) == 0 && len(roots) == 0 {
+		return urls
+	}
+	seen := make(map[string]struct{}, len(urls))
+	out := make([]string, 0, len(urls))
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+		if host == "" {
+			continue
+		}
+		if strings.TrimSpace(domain) != "" {
+			if !util.ScopeMatch(host, domain) {
+				continue
+			}
+		} else if !inScopeBySets(host, hosts, roots) {
+			continue
+		}
+		if _, ok := seen[raw]; ok {
+			continue
+		}
+		seen[raw] = struct{}{}
+		out = append(out, raw)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func printFinding(f model.Finding) {
 	method := strings.ToUpper(strings.TrimSpace(f.Method))
 	if method == "" {
@@ -258,10 +349,11 @@ func main() {
 		stageDone(s1, "input loaded")
 	} else {
 		s1 := stageStart(1, totalStages, "Collector")
+		headlessNoSandbox := cfg.Collector.KatanaHeadlessNoSandbox
 		stageInfo("sources", "waymore + katana(std) + katana(headless)")
 		stageInfo("scope", cfg.Domain)
 		stageInfo("katana std", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatana, cfg.Collector.KatanaConcurrency, cfg.Collector.KatanaDepth))
-		stageInfo("katana hl", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth))
+		stageInfo("katana hl", fmt.Sprintf("enabled=%t,c=%d,d=%d,no-sandbox=%t", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth, headlessNoSandbox))
 		var err error
 		crawled, err = collector.Collect(cfg.OutDir, cfg.Domain, cfg.SubsFile, collector.Options{
 			UseWaymore:                cfg.Collector.UseWaymore,
@@ -285,6 +377,12 @@ func main() {
 	stageInfo("js workers", cfg.Scanner.JSWorkers)
 	jsf := jsfinder.New(client, cfg.Domain, cfg.Scanner.JSWorkers, cfg.Verbose)
 	jsd := jsf.Discover(crawled.JSURLs)
+	scopeHosts, scopeRoots := scopeFromURLs(crawled.URLs)
+	beforeEndpoints := len(jsd.Endpoints)
+	jsd.Endpoints = filterScopeURLs(jsd.Endpoints, cfg.Domain, scopeHosts, scopeRoots)
+	if len(jsd.Endpoints) != beforeEndpoints {
+		stageInfo("scope filter", fmt.Sprintf("endpoints %d -> %d", beforeEndpoints, len(jsd.Endpoints)))
+	}
 	if cfg.ParamDictFile != "" {
 		if extra, err := util.ReadLines(cfg.ParamDictFile); err == nil {
 			jsd.Params = util.UniqueStrings(append(jsd.Params, extra...))

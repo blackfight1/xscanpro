@@ -67,6 +67,10 @@ collector:
   # Runs after standard katana round, used for SPA/dynamic route expansion.
   use_katana_headless: true
 
+  # Add -no-sandbox only for katana headless round.
+  # Recommended on VPS/container environments.
+  katana_headless_no_sandbox: true
+
   # Katana crawling concurrency.
   # 0 means use mode default.
   katana_concurrency: 16

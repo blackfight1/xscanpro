@@ -29,6 +29,7 @@ type CollectorConfig struct {
 	UseWaymore                bool `yaml:"use_waymore"`
 	UseKatana                 bool `yaml:"use_katana"`
 	UseKatanaHeadless         bool `yaml:"use_katana_headless"`
+	KatanaHeadlessNoSandbox   bool `yaml:"katana_headless_no_sandbox"`
 	KatanaConcurrency         int  `yaml:"katana_concurrency"`
 	KatanaDepth               int  `yaml:"katana_depth"`
 	KatanaHeadlessConcurrency int  `yaml:"katana_headless_concurrency"`
@@ -150,6 +151,7 @@ func defaultConfig() Config {
 			UseWaymore:                true,
 			UseKatana:                 true,
 			UseKatanaHeadless:         true,
+			KatanaHeadlessNoSandbox:   true,
 			KatanaHeadlessConcurrency: 8,
 		},
 		Target: TargetConfig{

@@ -17,6 +17,7 @@ It uses neutral markers and context-aware verification.
 - Collector scheduling strategy:
   - waymore + katana standard round run in parallel
   - katana headless round runs after standard round (for SPA routes/XHR-triggered links)
+  - headless round supports optional `-no-sandbox` (configurable)
   - if katana headless process is killed (e.g. OOM), it will be skipped without breaking the whole pipeline
   - both katana rounds apply static-extension exclusion to reduce invalid asset crawling
   - merged URL results are scope-filtered again (prefer `-domain`, fallback to root domains derived from `-i`)
@@ -94,6 +95,7 @@ Common keys:
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_katana_headless`
+- `collector.katana_headless_no_sandbox`
 - `collector.katana_concurrency`
 - `collector.katana_depth`
 - `collector.katana_headless_concurrency`
@@ -162,6 +164,7 @@ Artifacts:
      - read user provided URL file directly
      - skip waymore/katana completely
 2. Extract endpoints and params from JS
+   - JS extracted endpoints are scope-filtered again before target generation
 3. Build scan targets
    - keep crawled URLs directly (avoid dropping known vulnerable links)
    - `batch` strategy: URL params + related JS params + high-value globals

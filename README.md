@@ -30,6 +30,7 @@ It uses neutral markers and context-aware verification.
 - In `batch` mode, scan-stage hidden params are limited to small high-value additions only
 - In `batch` mode, verify stage uses fewer representative probes and stops on first strong hit
 - Context-aware semantic probes in second stage (`test html` / `test attributes` / `special attributes` / `script sub-types` / `comment`)
+- Syntax-break detection: if input closes original context boundary and enters a new syntax area, it is treated as a hit
 - Similar-page strategy:
   - template grouping
   - sample scan first (or disable by `sample_per_group: 0`)
@@ -73,7 +74,7 @@ Run on Linux:
 -config config.yaml   # config file path
 -u https://a.example.com/path    # single URL input
 -i urls.txt           # batch URL list input file
--xss-only urls.txt    # xss-only mode: skip collector, scan this URL file directly
+-xss-only             # xss-only mode: skip collector and scan -u/-i directly
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
 -waymore false        # override collector.use_waymore (true/false)
@@ -84,6 +85,7 @@ Input rule:
 
 - `-u` and `-i` are mutually exclusive.
 - In full mode, provide exactly one of them.
+- In xss-only mode, still provide exactly one of `-u/-i`, then append `-xss-only`.
 
 Notes:
 
@@ -98,7 +100,7 @@ Common keys:
 - `input_url` (single URL input, same as `-u`)
 - `input_file` (batch URL file input, same as `-i`)
 - `input_url` and `input_file` are mutually exclusive in full mode
-- `xss_only_file` (set this to enable xss-only mode and skip collector)
+- `xss_only` (true means skip collector and scan `input_url/input_file` directly)
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_katana_headless`
@@ -169,7 +171,7 @@ Artifacts:
      - static extensions are excluded in katana crawling
      - merge and dedupe all collector outputs
    - xss-only mode:
-     - read user provided URL file directly
+     - read URLs from `-u` or `-i` directly
      - skip waymore/katana completely
 2. Extract endpoints and params from JS
    - JS extracted endpoints are scope-filtered again before target generation

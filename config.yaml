@@ -8,10 +8,13 @@ input_url: ""
 # Leave empty when using input_url.
 input_file: urls.txt
 
-# XSS-only mode input URL file.
-# When set (or CLI -xss-only is used), collector stage is skipped,
-# and -u/-i are not required.
-xss_only_file: ""
+# XSS-only mode switch.
+# true = skip collector stage and scan URLs from input_url/input_file directly.
+# CLI usage: append -xss-only after -u or -i.
+xss_only: false
+
+# Legacy key (kept only for compatibility with old config):
+# xss_only_file: urls.txt
 
 # Output directory for all generated artifacts.
 out_dir: output

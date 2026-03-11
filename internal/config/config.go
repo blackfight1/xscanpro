@@ -12,18 +12,19 @@ import (
 )
 
 type Config struct {
-	InputURL       string          `yaml:"input_url"`
-	InputFile      string          `yaml:"input_file"`
-	LegacySubsFile string          `yaml:"subs_file"`
-	XSSOnlyFile    string          `yaml:"xss_only_file"`
-	OutDir         string          `yaml:"out_dir"`
-	Mode           string          `yaml:"mode"`
-	ParamDictFile  string          `yaml:"param_dict_file"`
-	Collector      CollectorConfig `yaml:"collector"`
-	Target         TargetConfig    `yaml:"target"`
-	Scanner        ScannerConfig   `yaml:"scanner"`
-	Notify         NotifyConfig    `yaml:"notify"`
-	Verbose        bool            `yaml:"verbose"`
+	InputURL          string          `yaml:"input_url"`
+	InputFile         string          `yaml:"input_file"`
+	LegacySubsFile    string          `yaml:"subs_file"`
+	XSSOnly           bool            `yaml:"xss_only"`
+	LegacyXSSOnlyFile string          `yaml:"xss_only_file"`
+	OutDir            string          `yaml:"out_dir"`
+	Mode              string          `yaml:"mode"`
+	ParamDictFile     string          `yaml:"param_dict_file"`
+	Collector         CollectorConfig `yaml:"collector"`
+	Target            TargetConfig    `yaml:"target"`
+	Scanner           ScannerConfig   `yaml:"scanner"`
+	Notify            NotifyConfig    `yaml:"notify"`
+	Verbose           bool            `yaml:"verbose"`
 }
 
 type CollectorConfig struct {
@@ -86,7 +87,7 @@ func Parse() Config {
 	configPath := flag.String("config", "config.yaml", "yaml config file path")
 	singleURL := flag.String("u", "", "single target URL for collector input")
 	inputFile := flag.String("i", "", "batch URL list file for collector input")
-	xssOnlyFile := flag.String("xss-only", "", "xss-only mode URL list file, skip collectors")
+	xssOnly := flag.Bool("xss-only", false, "xss-only mode: skip collectors and scan URLs from -u or -i")
 	outDir := flag.String("out", "", "output directory")
 	mode := flag.String("mode", "", "scan profile: fast | balanced | deep")
 	waymore := flag.String("waymore", "", "override collector.use_waymore (true/false)")
@@ -98,40 +99,40 @@ func Parse() Config {
 	if strings.TrimSpace(cfg.InputFile) == "" && strings.TrimSpace(cfg.LegacySubsFile) != "" {
 		cfg.InputFile = strings.TrimSpace(cfg.LegacySubsFile)
 	}
+	if !cfg.XSSOnly && strings.TrimSpace(cfg.LegacyXSSOnlyFile) != "" {
+		cfg.XSSOnly = true
+		if strings.TrimSpace(cfg.InputURL) == "" && strings.TrimSpace(cfg.InputFile) == "" {
+			cfg.InputFile = strings.TrimSpace(cfg.LegacyXSSOnlyFile)
+		}
+	}
 	applyCLIOverrides(&cfg, func() map[string]bool {
 		seen := map[string]bool{}
 		flag.Visit(func(f *flag.Flag) {
 			seen[f.Name] = true
 		})
 		return seen
-	}(), singleURL, inputFile, xssOnlyFile, outDir, mode, waymore, verbose)
+	}(), singleURL, inputFile, xssOnly, outDir, mode, waymore, verbose)
 
 	applyModeDefaults(&cfg)
 
-	xssOnlyEnabled := strings.TrimSpace(cfg.XSSOnlyFile) != ""
-	if xssOnlyEnabled {
-		if _, err := os.Stat(strings.TrimSpace(cfg.XSSOnlyFile)); err != nil {
-			fmt.Printf("invalid -xss-only / xss_only_file: %v\n", err)
+	inputURL := strings.TrimSpace(cfg.InputURL)
+	inputFilePath := strings.TrimSpace(cfg.InputFile)
+	if inputURL == "" && inputFilePath == "" {
+		fmt.Println("missing input: provide either -u (single URL) or -i (batch URL file)")
+		flag.Usage()
+		os.Exit(1)
+	}
+	if inputURL != "" && inputFilePath != "" {
+		fmt.Println("invalid input: -u and -i are mutually exclusive")
+		os.Exit(1)
+	}
+	if inputFilePath != "" {
+		if _, err := os.Stat(inputFilePath); err != nil {
+			fmt.Printf("invalid -i / input_file: %v\n", err)
 			os.Exit(1)
 		}
-	} else {
-		inputURL := strings.TrimSpace(cfg.InputURL)
-		inputFilePath := strings.TrimSpace(cfg.InputFile)
-		if inputURL == "" && inputFilePath == "" {
-			fmt.Println("missing input: provide either -u (single URL) or -i (batch URL file)")
-			flag.Usage()
-			os.Exit(1)
-		}
-		if inputURL != "" && inputFilePath != "" {
-			fmt.Println("invalid input: -u and -i are mutually exclusive")
-			os.Exit(1)
-		}
-		if inputFilePath != "" {
-			if _, err := os.Stat(inputFilePath); err != nil {
-				fmt.Printf("invalid -i / input_file: %v\n", err)
-				os.Exit(1)
-			}
-		}
+	}
+	if !cfg.XSSOnly {
 		if !cfg.Collector.UseWaymore && !cfg.Collector.UseKatana && !cfg.Collector.UseKatanaHeadless {
 			fmt.Println("collector.use_waymore/use_katana/use_katana_headless cannot all be false")
 			os.Exit(1)
@@ -226,7 +227,9 @@ func loadConfigFile(configPath *string, cfg *Config) {
 func applyCLIOverrides(
 	cfg *Config,
 	seen map[string]bool,
-	singleURL, inputFile, xssOnlyFile, outDir, mode *string,
+	singleURL, inputFile *string,
+	xssOnly *bool,
+	outDir, mode *string,
 	waymore *string,
 	verbose *bool,
 ) {
@@ -243,7 +246,7 @@ func applyCLIOverrides(
 		}
 	}
 	if seen["xss-only"] {
-		cfg.XSSOnlyFile = strings.TrimSpace(*xssOnlyFile)
+		cfg.XSSOnly = *xssOnly
 	}
 	if seen["out"] {
 		cfg.OutDir = strings.TrimSpace(*outDir)

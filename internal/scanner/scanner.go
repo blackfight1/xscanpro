@@ -1183,6 +1183,18 @@ func buildSemanticProbes(contexts []string) []semanticProbe {
 			})
 		case "attribute_value":
 			add(semanticProbe{
+				Context:   "attribute_value:boundary_break_dq",
+				Payload:   `"` + token,
+				Token:     token,
+				Indicator: "attribute double-quote boundary appears breakable",
+			})
+			add(semanticProbe{
+				Context:   "attribute_value:boundary_break_sq",
+				Payload:   `'` + token,
+				Token:     token,
+				Indicator: "attribute single-quote boundary appears breakable",
+			})
+			add(semanticProbe{
 				Context:   "attribute_value:key",
 				Payload:   `"` + token + `="`,
 				Token:     token,
@@ -1246,6 +1258,16 @@ func semanticEvidence(p semanticProbe, resp string) (bool, string) {
 	switch p.Context {
 	case "script:string_break", "script:line_comment", "script:block_comment", "script:identifier":
 		return matchScriptContext(p, resp)
+	case "attribute_value:boundary_break_dq":
+		if matchAttributeBoundaryBreak(resp, p.Token, '"') {
+			return true, "attribute boundary is closed by injected double quote and enters new syntax area"
+		}
+		return false, ""
+	case "attribute_value:boundary_break_sq":
+		if matchAttributeBoundaryBreak(resp, p.Token, '\'') {
+			return true, "attribute boundary is closed by injected single quote and enters new syntax area"
+		}
+		return false, ""
 	case "attribute_value:key":
 		if rawInAttribute(resp, p.Payload) {
 			return true, "attribute value can be broken and a new attribute key is reflected"
@@ -1297,6 +1319,13 @@ func matchSpecialAttributeValue(resp, token string) bool {
 	}
 	styleExpr := regexp.MustCompile(`(?is)\bstyle\s*=\s*["'][^"']*expression\s*\([^"']*` + regexp.QuoteMeta(token) + `[^"']*\)[^"']*["']`)
 	return styleExpr.MatchString(resp)
+}
+
+func matchAttributeBoundaryBreak(resp, token string, quote rune) bool {
+	q := regexp.QuoteMeta(string(quote))
+	boundary := `(?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*\s*=|\s*/?>)`
+	pat := regexp.MustCompile(`(?is)` + q + q + regexp.QuoteMeta(token) + `["']?` + boundary)
+	return pat.MatchString(resp)
 }
 
 func matchScriptContext(p semanticProbe, resp string) (bool, string) {

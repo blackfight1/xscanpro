@@ -930,7 +930,7 @@ func (s *Scanner) quickReflectGet(task quickTask) []verifyTask {
 	markers := make(map[string]string, len(task.params))
 	paramVals := make(map[string]string, len(task.params))
 	for i, p := range task.params {
-		m := fmt.Sprintf("x%s_%03d", randHex(2), i)
+		m := fmt.Sprintf("x%s%03d", randHex(2), i)
 		markers[p] = m
 		paramVals[p] = m
 	}
@@ -940,7 +940,7 @@ func (s *Scanner) quickReflectGet(task quickTask) []verifyTask {
 		return nil
 	}
 	_, reflected, ct, err := s.client.Get(mutated)
-	if err != nil || !strings.Contains(strings.ToLower(ct), "text/html") {
+	if err != nil || !isHTMLContentType(ct) {
 		return nil
 	}
 
@@ -970,6 +970,41 @@ func (s *Scanner) quickReflectGet(task quickTask) []verifyTask {
 			groupKey:   task.groupKey,
 		})
 	}
+	if len(out) > 0 {
+		return out
+	}
+
+	// Fallback: if batch-style quick probe reflects nothing, retry with single-param probes.
+	// Some targets change route/logic when too many parameters are present.
+	for _, p := range chooseSingleFallbackParams(task.baseURL, task.params, 12) {
+		marker := fmt.Sprintf("x%s%03d", randHex(2), 0)
+		mutatedSingle, serr := setQuery(task.baseURL, p, marker)
+		if serr != nil {
+			continue
+		}
+		_, singleResp, singleCT, singleErr := s.client.Get(mutatedSingle)
+		if singleErr != nil || !isHTMLContentType(singleCT) {
+			continue
+		}
+		if !strings.Contains(singleResp, marker) {
+			continue
+		}
+		contexts := classifyContexts(singleResp, marker)
+		if len(contexts) == 0 {
+			continue
+		}
+		out = append(out, verifyTask{
+			method:     http.MethodGet,
+			baseURL:    task.baseURL,
+			param:      p,
+			marker:     marker,
+			contexts:   contexts,
+			batchCtx:   map[string]string{p: marker},
+			findingURL: mutatedSingle,
+			lines:      markerLines(singleResp, marker),
+			groupKey:   task.groupKey,
+		})
+	}
 	return out
 }
 
@@ -980,13 +1015,13 @@ func (s *Scanner) quickReflectPost(task quickTask) []verifyTask {
 	markers := make(map[string]string, len(task.params))
 	paramVals := make(map[string]string, len(task.params))
 	for i, p := range task.params {
-		m := fmt.Sprintf("x%s_%03d", randHex(2), i)
+		m := fmt.Sprintf("x%s%03d", randHex(2), i)
 		markers[p] = m
 		paramVals[p] = m
 	}
 
 	_, reflected, ct, err := s.client.PostForm(task.baseURL, mapToURLValues(paramVals), nil)
-	if err != nil || !strings.Contains(strings.ToLower(ct), "text/html") {
+	if err != nil || !isHTMLContentType(ct) {
 		return nil
 	}
 
@@ -1017,6 +1052,46 @@ func (s *Scanner) quickReflectPost(task quickTask) []verifyTask {
 			groupKey:   task.groupKey,
 		})
 	}
+	if len(out) > 0 {
+		return out
+	}
+
+	// Fallback for POST: retry small single-param probes when batch body reflects nothing.
+	limit := 10
+	if limit > len(task.params) {
+		limit = len(task.params)
+	}
+	for i := 0; i < limit; i++ {
+		p := task.params[i]
+		marker := fmt.Sprintf("x%s%03d", randHex(2), 0)
+		form := map[string]string{p: marker}
+		_, singleResp, singleCT, singleErr := s.client.PostForm(task.baseURL, mapToURLValues(form), nil)
+		if singleErr != nil || !isHTMLContentType(singleCT) {
+			continue
+		}
+		if !strings.Contains(singleResp, marker) {
+			continue
+		}
+		contexts := classifyContexts(singleResp, marker)
+		if len(contexts) == 0 {
+			continue
+		}
+		singleURL := task.baseURL
+		if u, uerr := setQuery(task.baseURL, p, marker); uerr == nil {
+			singleURL = u
+		}
+		out = append(out, verifyTask{
+			method:     http.MethodPost,
+			baseURL:    task.baseURL,
+			param:      p,
+			marker:     marker,
+			contexts:   contexts,
+			batchCtx:   map[string]string{p: marker},
+			findingURL: singleURL,
+			lines:      markerLines(singleResp, marker),
+			groupKey:   task.groupKey,
+		})
+	}
 	return out
 }
 
@@ -1031,40 +1106,59 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 		method = http.MethodGet
 	}
 
+	execProbe := func(payload string, ctx map[string]string) (resp string, contentType string, outURL string, err error) {
+		if method == http.MethodPost {
+			_, resp, contentType, err = s.client.PostForm(task.baseURL, mapToURLValues(ctx), nil)
+			outURL = task.findingURL
+			if u, uerr := setQueries(task.baseURL, ctx); uerr == nil {
+				outURL = u
+			}
+			return resp, contentType, outURL, err
+		}
+		mutatedProbe, merr := setQueryWithContext(task.baseURL, task.param, payload, ctx)
+		if merr != nil {
+			return "", "", task.findingURL, merr
+		}
+		outURL = mutatedProbe
+		_, resp, contentType, err = s.client.Get(mutatedProbe)
+		return resp, contentType, outURL, err
+	}
+
 	for _, p := range probes {
 		probeVals := cloneStringMap(task.batchCtx)
 		probeVals[task.param] = p.Payload
 
-		var (
-			probeResp string
-			probeCT   string
-			probeErr  error
-			outURL    string
-		)
-
-		if method == http.MethodPost {
-			_, probeResp, probeCT, probeErr = s.client.PostForm(task.baseURL, mapToURLValues(probeVals), nil)
-			if u, err := setQueries(task.baseURL, probeVals); err == nil {
-				outURL = u
-			} else {
-				outURL = task.findingURL
+		probeResp, probeCT, outURL, probeErr := execProbe(p.Payload, probeVals)
+		if probeErr != nil || !isHTMLContentType(probeCT) {
+			// Fallback: retry with minimal context to avoid route switches caused by extra params.
+			if len(probeVals) > 1 {
+				minimal := map[string]string{task.param: p.Payload}
+				probeResp, probeCT, outURL, probeErr = execProbe(p.Payload, minimal)
 			}
-		} else {
-			mutatedProbe, err := setQueryWithContext(task.baseURL, task.param, p.Payload, probeVals)
-			if err != nil {
-				continue
-			}
-			outURL = mutatedProbe
-			_, probeResp, probeCT, probeErr = s.client.Get(mutatedProbe)
 		}
-
-		if probeErr != nil || !strings.Contains(strings.ToLower(probeCT), "text/html") {
+		if probeErr != nil || !isHTMLContentType(probeCT) {
 			continue
 		}
+
 		ok, reason := semanticEvidence(p, probeResp)
+		if !ok && len(probeVals) > 1 {
+			minimal := map[string]string{task.param: p.Payload}
+			minResp, minCT, minURL, minErr := execProbe(p.Payload, minimal)
+			if minErr == nil && isHTMLContentType(minCT) {
+				if minOK, minReason := semanticEvidence(p, minResp); minOK {
+					ok = true
+					if strings.TrimSpace(minReason) != "" {
+						reason = minReason
+					}
+					probeResp = minResp
+					outURL = minURL
+				}
+			}
+		}
 		if !ok {
 			continue
 		}
+
 		lines := markerLines(probeResp, p.Token)
 		if len(lines) == 0 {
 			lines = markerLines(probeResp, p.Payload)
@@ -1088,6 +1182,50 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 	return model.Finding{}, false
 }
 
+func chooseSingleFallbackParams(rawURL string, params []string, max int) []string {
+	if len(params) == 0 {
+		return nil
+	}
+	if max <= 0 || max > len(params) {
+		max = len(params)
+	}
+	qset := map[string]struct{}{}
+	if u, err := url.Parse(rawURL); err == nil {
+		for k := range u.Query() {
+			k = strings.ToLower(strings.TrimSpace(k))
+			if k != "" {
+				qset[k] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, max)
+	seen := map[string]struct{}{}
+	for _, p := range params {
+		if len(out) >= max {
+			return out
+		}
+		if _, ok := qset[p]; !ok {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	for _, p := range params {
+		if len(out) >= max {
+			return out
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
 func mapToURLValues(kv map[string]string) url.Values {
 	vals := url.Values{}
 	for k, v := range kv {
@@ -1105,6 +1243,10 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func isHTMLContentType(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/html")
 }
 
 func (s *Scanner) selectVerifyProbes(probes []semanticProbe) []semanticProbe {

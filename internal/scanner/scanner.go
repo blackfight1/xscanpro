@@ -379,6 +379,8 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 	defer ticker.Stop()
 	stopProgress := make(chan struct{})
 	startedAt := time.Now()
+	lineMax := util.TerminalWidth(80)
+	lastLineLen := 0
 	shapeCounter := map[string]int{}
 	var shapeMu sync.Mutex
 	go func() {
@@ -387,23 +389,22 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 			case <-ticker.C:
 				doneTargets := atomic.LoadInt32(&processedTargets)
 				extra := fmt.Sprintf(
-					"phase=%s | quick %d/%d | verify %d | findings %d | skip-shape %d | params %d",
+					"ph=%s q=%d/%d v=%d f=%d",
 					label,
 					atomic.LoadInt32(&processedBatches),
 					atomic.LoadInt32(&generatedBatches),
 					atomic.LoadInt32(&processedVerify),
 					atomic.LoadInt32(&findingCount),
-					atomic.LoadInt32(&skippedByShape),
-					atomic.LoadInt32(&generatedParams),
 				)
 				line := util.RenderProgressLine(
 					"  > scanner",
 					int64(doneTargets),
 					int64(len(targets)),
-					22,
+					18,
 					startedAt,
 					extra,
 				)
+				line = util.FitProgressLine(line, lineMax, &lastLineLen)
 				fmt.Printf("\r%s", line)
 			case <-stopProgress:
 				return
@@ -530,10 +531,11 @@ func (s *Scanner) scanBatch(label string, targets []scopedTarget) ([]model.Findi
 		"  > scanner",
 		int64(atomic.LoadInt32(&processedTargets)),
 		int64(len(targets)),
-		22,
+		18,
 		startedAt,
 		finalExtra,
 	)
+	finalLine = util.FitProgressLine(finalLine, lineMax, &lastLineLen)
 	fmt.Printf("\r%s\n", finalLine)
 
 	return findings, hitGroups

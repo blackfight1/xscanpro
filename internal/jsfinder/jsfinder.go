@@ -105,6 +105,8 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 	defer ticker.Stop()
 	done := make(chan struct{})
 	startedAt := time.Now()
+	lineMax := util.TerminalWidth(80)
+	lastLineLen := 0
 	go func() {
 		for {
 			select {
@@ -114,10 +116,11 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 					"  > js discovery",
 					int64(p),
 					int64(total),
-					22,
+					18,
 					startedAt,
 					"",
 				)
+				line = util.FitProgressLine(line, lineMax, &lastLineLen)
 				fmt.Printf("\r%s", line)
 			case <-done:
 				return
@@ -179,10 +182,11 @@ func (f *Finder) Discover(jsURLs []string) model.JSDiscovery {
 		"  > js discovery",
 		int64(total),
 		int64(total),
-		22,
+		18,
 		startedAt,
 		"done",
 	)
+	finalLine = util.FitProgressLine(finalLine, lineMax, &lastLineLen)
 	fmt.Printf("\r%s\n", finalLine)
 	if f.verbose {
 		fmt.Printf("  - js dedupe:       content_hash_skipped=%d, large_js_downgraded=%d\n",

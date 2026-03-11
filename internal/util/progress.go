@@ -2,6 +2,8 @@ package util
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,4 +87,37 @@ func formatDuration(d time.Duration) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	return fmt.Sprintf("%dh%02dm", h, m)
+}
+
+func TerminalWidth(defaultWidth int) int {
+	if defaultWidth <= 0 {
+		defaultWidth = 80
+	}
+	v := strings.TrimSpace(os.Getenv("COLUMNS"))
+	if v == "" {
+		return defaultWidth
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 20 {
+		return defaultWidth
+	}
+	return n
+}
+
+func FitProgressLine(line string, maxLen int, lastLen *int) string {
+	if maxLen > 0 && len(line) > maxLen {
+		if maxLen <= 3 {
+			line = line[:maxLen]
+		} else {
+			line = line[:maxLen-3] + "..."
+		}
+	}
+	if lastLen == nil {
+		return line
+	}
+	if len(line) < *lastLen {
+		line += strings.Repeat(" ", *lastLen-len(line))
+	}
+	*lastLen = len(line)
+	return line
 }

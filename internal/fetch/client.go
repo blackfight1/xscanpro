@@ -11,7 +11,8 @@ import (
 )
 
 type Client struct {
-	http *http.Client
+	http      *http.Client
+	userAgent string
 }
 
 func New(timeoutSec int) *Client {
@@ -26,7 +27,24 @@ func New(timeoutSec int) *Client {
 			Timeout:   time.Duration(timeoutSec) * time.Second,
 			Transport: tr,
 		},
+		userAgent: "xscanpro/0.1",
 	}
+}
+
+func (c *Client) SetUserAgent(ua string) {
+	ua = strings.TrimSpace(ua)
+	if ua == "" {
+		return
+	}
+	c.userAgent = ua
+}
+
+func (c *Client) userAgentValue() string {
+	ua := strings.TrimSpace(c.userAgent)
+	if ua == "" {
+		return "xscanpro/0.1"
+	}
+	return ua
 }
 
 func (c *Client) Get(url string) (status int, body string, contentType string, err error) {
@@ -34,7 +52,7 @@ func (c *Client) Get(url string) (status int, body string, contentType string, e
 	if err != nil {
 		return 0, "", "", err
 	}
-	req.Header.Set("User-Agent", "xscanpro/0.1")
+	req.Header.Set("User-Agent", c.userAgentValue())
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := c.http.Do(req)
@@ -59,7 +77,7 @@ func (c *Client) PostForm(targetURL string, form url.Values, headers map[string]
 	if err != nil {
 		return 0, "", "", err
 	}
-	req.Header.Set("User-Agent", "xscanpro/0.1")
+	req.Header.Set("User-Agent", c.userAgentValue())
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if u, perr := url.Parse(targetURL); perr == nil {

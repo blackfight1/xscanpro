@@ -54,6 +54,7 @@ var (
 		".map": {}, ".webmanifest": {}, ".swf": {}, ".apk": {}, ".exe": {}, ".bin": {}, ".dmg": {}, ".iso": {},
 		".doc": {}, ".docx": {}, ".xls": {}, ".xlsx": {}, ".ppt": {}, ".pptx": {},
 	}
+	debugMode bool
 )
 
 func paint(color, s string) string {
@@ -90,6 +91,8 @@ func printHeader(cfg config.Config) {
 	fmt.Printf("  %-18s enabled=%t, batch=%d\n", "post scan", cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize)
 	fmt.Printf("  %-18s enabled=%t, size=%d\n", "scan batch", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize)
 	fmt.Printf("  %-18s dingtalk=%t\n", "notify", cfg.Notify.Enabled)
+	fmt.Printf("  %-18s %s\n", "http ua", trimForConsole(cfg.Scanner.UserAgent, 88))
+	fmt.Printf("  %-18s %t\n", "debug", cfg.Debug)
 	fmt.Println(paint(clrGray, line("-", 72)))
 }
 
@@ -110,6 +113,13 @@ func stageWarn(msg string) {
 
 func stageError(msg string) {
 	fmt.Println(paint(clrRed, "  [ERR ] "+msg))
+}
+
+func stageDebug(format string, args ...interface{}) {
+	if !debugMode {
+		return
+	}
+	fmt.Println(paint(clrGray, "  [DEBUG] "+fmt.Sprintf(format, args...)))
 }
 
 func stageDone(start time.Time, detail string) {
@@ -378,6 +388,7 @@ func main() {
 	cfg := config.Parse()
 	start := time.Now()
 	xssOnlyMode := cfg.XSSOnly
+	debugMode = cfg.Debug
 
 	printHeader(cfg)
 
@@ -392,6 +403,8 @@ func main() {
 	}
 
 	client := fetch.New(cfg.Scanner.HTTPTimeoutSec)
+	client.SetUserAgent(cfg.Scanner.UserAgent)
+	stageDebug("http user-agent: %s", trimForConsole(cfg.Scanner.UserAgent, 120))
 	notifier := notify.New(notify.Config{
 		Enabled:    cfg.Notify.Enabled,
 		MaxPerSite: cfg.Notify.MaxPerSite,
@@ -401,7 +414,7 @@ func main() {
 			Webhook: cfg.Notify.DingTalk.Webhook,
 			Secret:  cfg.Notify.DingTalk.Secret,
 		},
-	}, cfg.Verbose)
+	}, cfg.Debug)
 	defer notifier.Close()
 
 	totalStages := 4
@@ -416,6 +429,7 @@ func main() {
 			stageInfo("source", cfg.InputFile)
 		}
 		stageInfo("collector", "skipped")
+		stageDebug("xss-only mode enabled; collector stage bypassed")
 		var err error
 		crawled, err = loadXSSOnlyInput(cfg.InputURL, cfg.InputFile)
 		if err != nil {
@@ -437,6 +451,7 @@ func main() {
 		stageInfo("input urls", len(collectorInputs))
 		stageInfo("katana std", fmt.Sprintf("enabled=%t,c=%d,d=%d", cfg.Collector.UseKatana, cfg.Collector.KatanaConcurrency, cfg.Collector.KatanaDepth))
 		stageInfo("katana hl", fmt.Sprintf("enabled=%t,c=%d,d=%d,no-sandbox=%t", cfg.Collector.UseKatanaHeadless, cfg.Collector.KatanaHeadlessConcurrency, cfg.Collector.KatanaHeadlessDepth, headlessNoSandbox))
+		stageDebug("collector debug=%t", cfg.Debug)
 		var err error
 		crawled, err = collector.Collect(cfg.OutDir, collectorInputs, collector.Options{
 			UseWaymore:                cfg.Collector.UseWaymore,
@@ -447,6 +462,7 @@ func main() {
 			KatanaDepth:               cfg.Collector.KatanaDepth,
 			KatanaHeadlessConcurrency: cfg.Collector.KatanaHeadlessConcurrency,
 			KatanaHeadlessDepth:       cfg.Collector.KatanaHeadlessDepth,
+			Debug:                     cfg.Debug,
 		})
 		if err != nil {
 			stageError(fmt.Sprintf("collection failed: %v", err))
@@ -459,7 +475,7 @@ func main() {
 
 	s2 := stageStart(2, totalStages, "JS Discovery")
 	stageInfo("js workers", cfg.Scanner.JSWorkers)
-	jsf := jsfinder.New(client, "", cfg.Scanner.JSWorkers, cfg.Verbose)
+	jsf := jsfinder.New(client, "", cfg.Scanner.JSWorkers, cfg.Debug)
 	jsd := jsf.Discover(crawled.JSURLs)
 	scopeHosts, scopeRoots := scopeFromURLs(crawled.URLs)
 	beforeEndpoints := len(jsd.Endpoints)
@@ -500,7 +516,8 @@ func main() {
 	stageInfo("post scan", cfg.Scanner.EnablePostScan)
 	stageInfo("post batch", cfg.Scanner.PostParamBatchSize)
 	stageInfo("scan batch", fmt.Sprintf("enabled=%t,size=%d", cfg.Scanner.ScanBatchEnabled, cfg.Scanner.ScanBatchSize))
-	scan := scanner.New(client, cfg.Scanner.ScanWorkers, cfg.Scanner.MaxParamsPerURL, cfg.Verbose)
+	scan := scanner.New(client, cfg.Scanner.ScanWorkers, cfg.Scanner.MaxParamsPerURL, cfg.Debug)
+	stageDebug("scanner constructed with debug=%t", cfg.Debug)
 	scan.SetTemplateStrategy(cfg.Scanner.SamplePerGroup, cfg.Scanner.ExpandOnHit)
 	scan.SetBatchStrategy(cfg.Scanner.AllParams, cfg.Scanner.ParamBatchSize)
 	scan.SetPostStrategy(cfg.Scanner.EnablePostScan, cfg.Scanner.PostParamBatchSize, cfg.Scanner.MaxPostFormsPerURL, cfg.Scanner.MaxPostParamsPerForm)

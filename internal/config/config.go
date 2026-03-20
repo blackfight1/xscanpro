@@ -11,6 +11,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultMobileUserAgent = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
 type Config struct {
 	InputURL          string          `yaml:"input_url"`
 	InputFile         string          `yaml:"input_file"`
@@ -24,6 +26,7 @@ type Config struct {
 	Target            TargetConfig    `yaml:"target"`
 	Scanner           ScannerConfig   `yaml:"scanner"`
 	Notify            NotifyConfig    `yaml:"notify"`
+	Debug             bool            `yaml:"debug"`
 	Verbose           bool            `yaml:"verbose"`
 }
 
@@ -46,25 +49,26 @@ type TargetConfig struct {
 }
 
 type ScannerConfig struct {
-	JSWorkers            int  `yaml:"js_workers"`
-	ScanWorkers          int  `yaml:"scan_workers"`
-	TargetWorkers        int  `yaml:"target_workers"`
-	QuickWorkers         int  `yaml:"quick_workers"`
-	VerifyWorkers        int  `yaml:"verify_workers"`
-	HTTPTimeoutSec       int  `yaml:"http_timeout_sec"`
-	MaxParamsPerURL      int  `yaml:"max_params_per_url"`
-	AllParams            bool `yaml:"all_params"`
-	ParamBatchSize       int  `yaml:"param_batch_size"`
-	ScanBatchEnabled     bool `yaml:"scan_batch_enabled"`
-	ScanBatchSize        int  `yaml:"scan_batch_size"`
-	EnablePostScan       bool `yaml:"enable_post_scan"`
-	PostParamBatchSize   int  `yaml:"post_param_batch_size"`
-	MaxPostFormsPerURL   int  `yaml:"max_post_forms_per_url"`
-	MaxPostParamsPerForm int  `yaml:"max_post_params_per_form"`
-	SamplePerGroup       int  `yaml:"sample_per_group"`
-	ExpandOnHit          bool `yaml:"expand_on_hit"`
-	ShapeDedupeEnabled   bool `yaml:"shape_dedupe_enabled"`
-	ShapeThreshold       int  `yaml:"shape_threshold"`
+	JSWorkers            int    `yaml:"js_workers"`
+	ScanWorkers          int    `yaml:"scan_workers"`
+	TargetWorkers        int    `yaml:"target_workers"`
+	QuickWorkers         int    `yaml:"quick_workers"`
+	VerifyWorkers        int    `yaml:"verify_workers"`
+	HTTPTimeoutSec       int    `yaml:"http_timeout_sec"`
+	UserAgent            string `yaml:"user_agent"`
+	MaxParamsPerURL      int    `yaml:"max_params_per_url"`
+	AllParams            bool   `yaml:"all_params"`
+	ParamBatchSize       int    `yaml:"param_batch_size"`
+	ScanBatchEnabled     bool   `yaml:"scan_batch_enabled"`
+	ScanBatchSize        int    `yaml:"scan_batch_size"`
+	EnablePostScan       bool   `yaml:"enable_post_scan"`
+	PostParamBatchSize   int    `yaml:"post_param_batch_size"`
+	MaxPostFormsPerURL   int    `yaml:"max_post_forms_per_url"`
+	MaxPostParamsPerForm int    `yaml:"max_post_params_per_form"`
+	SamplePerGroup       int    `yaml:"sample_per_group"`
+	ExpandOnHit          bool   `yaml:"expand_on_hit"`
+	ShapeDedupeEnabled   bool   `yaml:"shape_dedupe_enabled"`
+	ShapeThreshold       int    `yaml:"shape_threshold"`
 }
 
 type NotifyConfig struct {
@@ -91,7 +95,8 @@ func Parse() Config {
 	outDir := flag.String("out", "", "output directory")
 	mode := flag.String("mode", "", "scan profile: fast | balanced | deep")
 	waymore := flag.String("waymore", "", "override collector.use_waymore (true/false)")
-	verbose := flag.Bool("v", false, "verbose output")
+	debug := flag.Bool("debug", false, "debug output to terminal (including collector tool stdout/stderr)")
+	verbose := flag.Bool("v", false, "alias of -debug (compat)")
 
 	flag.Parse()
 
@@ -111,9 +116,15 @@ func Parse() Config {
 			seen[f.Name] = true
 		})
 		return seen
-	}(), singleURL, inputFile, xssOnly, outDir, mode, waymore, verbose)
+	}(), singleURL, inputFile, xssOnly, outDir, mode, waymore, debug, verbose)
 
 	applyModeDefaults(&cfg)
+	if cfg.Verbose && !cfg.Debug {
+		cfg.Debug = true
+	}
+	if cfg.Debug {
+		cfg.Verbose = true
+	}
 
 	inputURL := strings.TrimSpace(cfg.InputURL)
 	inputFilePath := strings.TrimSpace(cfg.InputFile)
@@ -185,6 +196,7 @@ func defaultConfig() Config {
 			ExpandOnHit:          true,
 			ShapeDedupeEnabled:   true,
 			ShapeThreshold:       10,
+			UserAgent:            defaultMobileUserAgent,
 		},
 		Notify: NotifyConfig{
 			Enabled:    false,
@@ -231,6 +243,7 @@ func applyCLIOverrides(
 	xssOnly *bool,
 	outDir, mode *string,
 	waymore *string,
+	debug *bool,
 	verbose *bool,
 ) {
 	if seen["u"] {
@@ -261,6 +274,9 @@ func applyCLIOverrides(
 			os.Exit(1)
 		}
 		cfg.Collector.UseWaymore = v
+	}
+	if seen["debug"] {
+		cfg.Debug = *debug
 	}
 	if seen["v"] {
 		cfg.Verbose = *verbose
@@ -440,6 +456,9 @@ func applyModeDefaults(cfg *Config) {
 	}
 	if cfg.Scanner.ScanBatchSize <= 0 {
 		cfg.Scanner.ScanBatchSize = 2000
+	}
+	if strings.TrimSpace(cfg.Scanner.UserAgent) == "" {
+		cfg.Scanner.UserAgent = defaultMobileUserAgent
 	}
 	if strings.TrimSpace(cfg.Target.ParamStrategy) == "" {
 		cfg.Target.ParamStrategy = "batch"

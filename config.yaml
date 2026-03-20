@@ -27,7 +27,12 @@ mode: balanced
 # Leave empty string to disable.
 param_dict_file: ""
 
+# Enable debug logs to terminal (recommended for troubleshooting).
+# true = print internal debug lines and collector subprocess stdout/stderr.
+debug: false
+
 # Enable verbose logs.
+# Legacy alias of debug; kept for compatibility.
 verbose: false
 
 notify:
@@ -150,6 +155,10 @@ scanner:
   # HTTP timeout in seconds.
   # 0 means use mode default.
   http_timeout_sec: 15
+
+  # HTTP User-Agent used by built-in requests (JS fetch + scanner requests).
+  # Does not change external tool UAs (katana/waymore).
+  user_agent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
   # Max params tested per URL when all_params=false.
   # Ignored when all_params=true.

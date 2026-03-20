@@ -56,6 +56,7 @@ type Options struct {
 	KatanaDepth               int
 	KatanaHeadlessConcurrency int
 	KatanaHeadlessDepth       int
+	Debug                     bool
 }
 
 func Collect(outDir string, inputURLs []string, opt Options) (model.CrawlResult, error) {
@@ -153,7 +154,7 @@ func Collect(outDir string, inputURLs []string, opt Options) (model.CrawlResult,
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := run(ctx, outDir, "waymore",
+				if err := run(ctx, outDir, "waymore", opt.Debug,
 					"-i", filepath.Base(waymoreRootsPath),
 					"-mode", "U",
 					"-nlf",
@@ -168,7 +169,7 @@ func Collect(outDir string, inputURLs []string, opt Options) (model.CrawlResult,
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := runKatana(ctx, outDir, katanaInputPath, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false, false); err != nil {
+				if err := runKatana(ctx, outDir, katanaInputPath, katOut, opt.KatanaDepth, opt.KatanaConcurrency, false, false, opt.Debug); err != nil {
 					errCh <- fmt.Errorf("katana failed: %w", err)
 				}
 			}()
@@ -189,7 +190,7 @@ func Collect(outDir string, inputURLs []string, opt Options) (model.CrawlResult,
 		files = append(files, katOut)
 	}
 	if opt.UseKatanaHeadless {
-		if err := runKatana(ctx, outDir, katanaInputPath, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true, opt.KatanaHeadlessNoSandbox); err != nil {
+		if err := runKatana(ctx, outDir, katanaInputPath, katHeadlessOut, opt.KatanaHeadlessDepth, opt.KatanaHeadlessConcurrency, true, opt.KatanaHeadlessNoSandbox, opt.Debug); err != nil {
 			if isProcessKilledError(err) {
 				fmt.Printf("[collector] katana headless was killed, skip headless round and continue\n")
 			} else {
@@ -216,7 +217,7 @@ func safeRemove(path string) {
 	_ = os.Remove(path)
 }
 
-func runKatana(ctx context.Context, outDir, inputFile, outFile string, depth, concurrency int, headless, noSandbox bool) error {
+func runKatana(ctx context.Context, outDir, inputFile, outFile string, depth, concurrency int, headless, noSandbox, debug bool) error {
 	absInput, _ := filepath.Abs(inputFile)
 	args := []string{
 		"-list", absInput,
@@ -234,7 +235,7 @@ func runKatana(ctx context.Context, outDir, inputFile, outFile string, depth, co
 			args = append(args, "-no-sandbox")
 		}
 	}
-	return run(ctx, outDir, "katana", args...)
+	return run(ctx, outDir, "katana", debug, args...)
 }
 
 func parseInputHost(raw string) string {
@@ -342,9 +343,14 @@ func registrableDomain(host string) string {
 	return h
 }
 
-func run(ctx context.Context, dir, name string, args ...string) error {
+func run(ctx context.Context, dir, name string, debug bool, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if debug {
+		fmt.Printf("[debug] exec: %s %s\n", name, strings.Join(args, " "))
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	return cmd.Run()
 }
 

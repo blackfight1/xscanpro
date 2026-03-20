@@ -976,7 +976,11 @@ func (s *Scanner) quickReflectGet(task quickTask) []verifyTask {
 
 	// Fallback: if batch-style quick probe reflects nothing, retry with single-param probes.
 	// Some targets change route/logic when too many parameters are present.
-	for _, p := range chooseSingleFallbackParams(task.baseURL, task.params, 12) {
+	fallbackParams := chooseSingleFallbackParams(task.baseURL, task.params, 12)
+	if s.verbose {
+		fmt.Printf("  - quick fallback:  method=GET, url=%s, params=%d\n", trimForLog(task.baseURL, 96), len(fallbackParams))
+	}
+	for _, p := range fallbackParams {
 		marker := fmt.Sprintf("x%s%03d", randHex(2), 0)
 		mutatedSingle, serr := setQuery(task.baseURL, p, marker)
 		if serr != nil {
@@ -1061,6 +1065,9 @@ func (s *Scanner) quickReflectPost(task quickTask) []verifyTask {
 	if limit > len(task.params) {
 		limit = len(task.params)
 	}
+	if s.verbose {
+		fmt.Printf("  - quick fallback:  method=POST, url=%s, params=%d\n", trimForLog(task.baseURL, 96), limit)
+	}
 	for i := 0; i < limit; i++ {
 		p := task.params[i]
 		marker := fmt.Sprintf("x%s%03d", randHex(2), 0)
@@ -1132,6 +1139,9 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 		if probeErr != nil || !isHTMLContentType(probeCT) {
 			// Fallback: retry with minimal context to avoid route switches caused by extra params.
 			if len(probeVals) > 1 {
+				if s.verbose {
+					fmt.Printf("  - verify fallback: method=%s, param=%s, reason=request_or_ct\n", method, task.param)
+				}
 				minimal := map[string]string{task.param: p.Payload}
 				probeResp, probeCT, outURL, probeErr = execProbe(p.Payload, minimal)
 			}
@@ -1142,6 +1152,9 @@ func (s *Scanner) verifyCandidate(task verifyTask) (model.Finding, bool) {
 
 		ok, reason := semanticEvidence(p, probeResp)
 		if !ok && len(probeVals) > 1 {
+			if s.verbose {
+				fmt.Printf("  - verify fallback: method=%s, param=%s, reason=semantic\n", method, task.param)
+			}
 			minimal := map[string]string{task.param: p.Payload}
 			minResp, minCT, minURL, minErr := execProbe(p.Payload, minimal)
 			if minErr == nil && isHTMLContentType(minCT) {
@@ -1247,6 +1260,14 @@ func cloneStringMap(in map[string]string) map[string]string {
 
 func isHTMLContentType(contentType string) bool {
 	return strings.Contains(strings.ToLower(contentType), "text/html")
+}
+
+func trimForLog(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 func (s *Scanner) selectVerifyProbes(probes []semanticProbe) []semanticProbe {

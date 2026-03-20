@@ -78,7 +78,8 @@ Run on Linux:
 -out output           # output directory
 -mode balanced        # fast | balanced | deep
 -waymore false        # override collector.use_waymore (true/false)
--v                    # verbose logs
+-debug                # debug logs to terminal (including collector subprocess output)
+-v                    # legacy alias of -debug
 ```
 
 Input rule:
@@ -101,6 +102,7 @@ Common keys:
 - `input_file` (batch URL file input, same as `-i`)
 - `input_url` and `input_file` are mutually exclusive in full mode
 - `xss_only` (true means skip collector and scan `input_url/input_file` directly)
+- `debug` (print debug output to terminal; also enables verbose internals)
 - `collector.use_waymore`
 - `collector.use_katana`
 - `collector.use_katana_headless`
@@ -128,6 +130,7 @@ Common keys:
 - `scanner.target_workers`
 - `scanner.quick_workers`
 - `scanner.verify_workers`
+- `scanner.user_agent` (built-in HTTP User-Agent for JS/scan requests)
 - `notify.enabled`
 - `notify.max_per_site`
 - `notify.dingtalk.webhook`
@@ -147,6 +150,7 @@ Terminal output style:
 
 - startup summary (mode/input/output/workers/notify)
 - stage blocks for collector / JS discovery / target generation / scanner
+- optional debug stream (`-debug` / `debug: true`) for internal and collector process output
 - inline progress bars for JS and scan phases (with speed/ETA)
 - highlighted `[HIT]` blocks for findings
 - final summary block
